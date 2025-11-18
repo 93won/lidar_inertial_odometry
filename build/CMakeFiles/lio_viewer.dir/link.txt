@@ -1,0 +1,2 @@
+/usr/bin/ar qc liblio_viewer.a CMakeFiles/lio_viewer.dir/src/LIOViewer.cpp.o CMakeFiles/lio_viewer.dir/src/LieUtils.cpp.o CMakeFiles/lio_viewer.dir/src/PointCloudUtils.cpp.o CMakeFiles/lio_viewer.dir/src/State.cpp.o CMakeFiles/lio_viewer.dir/src/Estimator.cpp.o
+/usr/bin/ranlib liblio_viewer.a
