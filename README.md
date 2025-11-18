@@ -10,6 +10,11 @@ Tightly-coupled LiDAR-Inertial Odometry using Iterated Extended Kalman Filter wi
 - **Voxel hashing for fast correspondence search**: Hash-based spatial indexing with O(1) lookup
 - **Motion compensation**: IMU-based undistortion for moving LiDAR scans
 
+## Demo
+
+[![LIO Demo](https://img.youtube.com/vi/2JymC0LWDWI/0.jpg)](https://www.youtube.com/watch?v=2JymC0LWDWI)
+
+
 
 ### Installation (Ubuntu/Debian)
 ```bash
