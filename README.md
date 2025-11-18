@@ -16,7 +16,7 @@ Tightly-coupled LiDAR-Inertial Odometry using Iterated Extended Kalman Filter wi
 
 
 
-### Installation (Ubuntu/Debian)
+### Installation (Ubuntu 22.04)
 ```bash
 sudo apt update
 sudo apt install cmake libeigen3-dev libglew-dev libyaml-cpp-dev
