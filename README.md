@@ -7,7 +7,7 @@ Tightly-coupled LiDAR-Inertial Odometry using Iterated Extended Kalman Filter wi
 ## Features
 
 - **Iterated Extended Kalman Filter (IEKF)**: Direct LiDAR-IMU fusion with nested iteration for re-linearization and convergence
-- **Voxel hashing for fast correspondence search**: Hash-based spatial indexing with O(1) lookup
+- **Incremental Voxel hashing for fast correspondence search**: Hash-based spatial indexing with O(1) lookup
 - **Motion compensation**: IMU-based undistortion for moving LiDAR scans
 
 ## Demo

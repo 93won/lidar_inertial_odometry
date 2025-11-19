@@ -120,6 +120,9 @@ public:
     /// Get current voxel map for visualization
     std::shared_ptr<VoxelMap> GetVoxelMap() const;
     
+    /// Print processing time statistics
+    void PrintProcessingTimeStatistics() const;
+    
     // Configuration parameters
     struct Parameters {
         // IMU parameters

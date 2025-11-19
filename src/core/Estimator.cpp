@@ -1129,6 +1129,35 @@ std::shared_ptr<VoxelMap> Estimator::GetVoxelMap() const {
     return m_voxel_map;
 }
 
+void Estimator::PrintProcessingTimeStatistics() const {
+    if (m_processing_times.empty()) {
+        spdlog::warn("No processing time data collected");
+        return;
+    }
+    
+    double sum = 0.0;
+    double min_time = m_processing_times[0];
+    double max_time = m_processing_times[0];
+    
+    for (double t : m_processing_times) {
+        sum += t;
+        min_time = std::min(min_time, t);
+        max_time = std::max(max_time, t);
+    }
+    
+    double avg_time = sum / m_processing_times.size();
+    
+    spdlog::info("");
+    spdlog::info("════════════════════════════════════════════════════════");
+    spdlog::info("📊 Processing Time Statistics (Total {} frames)", m_processing_times.size());
+    spdlog::info("════════════════════════════════════════════════════════");
+    spdlog::info("   Average: {:.2f} ms", avg_time);
+    spdlog::info("   Min:     {:.2f} ms", min_time);
+    spdlog::info("   Max:     {:.2f} ms", max_time);
+    spdlog::info("════════════════════════════════════════════════════════");
+    spdlog::info("");
+}
+
 // ============================================================================
 // Undistortion & Interpolation (Placeholder)
 // ============================================================================
