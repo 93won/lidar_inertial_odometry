@@ -434,11 +434,27 @@ void LIOViewer::DrawVoxelCubes(std::shared_ptr<VoxelMap> voxel_map) {
     std::vector<VoxelKey> occupied_voxels = voxel_map->GetOccupiedVoxels();
     float voxel_size = voxel_map->GetVoxelSize();
     
+    // First pass: find z min/max
+    float z_min = std::numeric_limits<float>::max();
+    float z_max = std::numeric_limits<float>::lowest();
+    
+    for (const auto& voxel_key : occupied_voxels) {
+        Eigen::Vector3f center = voxel_map->VoxelKeyToCenter(voxel_key);
+        z_min = std::min(z_min, center.z());
+        z_max = std::max(z_max, center.z());
+    }
+    
+    // Prevent division by zero
+    float z_range = z_max - z_min;
+    if (z_range < 0.01f) {
+        z_range = 0.01f;
+    }
+    
     // Enable blending for transparency
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     
-    // Draw each voxel as a white cube with hit-count based transparency
+    // Draw each voxel as a colored cube based on z height
     glLineWidth(1.0f);
     
     // Get max hit count from VoxelMap config
@@ -453,12 +469,35 @@ void LIOViewer::DrawVoxelCubes(std::shared_ptr<VoxelMap> voxel_map) {
         // Calculate alpha: linear mapping from hit_count [1, max] to alpha [0.1, 1.0]
         float alpha = std::min(1.0f, std::max(0.1f, hit_count / max_hit_count));
         
-        // Draw filled cube with white color and hit-count based alpha
-        glColor4f(1.0f, 1.0f, 1.0f, alpha * 0.3f);  // Filled cube with transparency
+        // Calculate color based on z height (jet colormap)
+        float normalized_z = (center.z() - z_min) / z_range;  // 0 to 1
+        float r, g, b;
+        
+        // Jet colormap: blue -> cyan -> green -> yellow -> red
+        if (normalized_z < 0.25f) {
+            r = 0.0f;
+            g = 4.0f * normalized_z;
+            b = 1.0f;
+        } else if (normalized_z < 0.5f) {
+            r = 0.0f;
+            g = 1.0f;
+            b = 1.0f - 4.0f * (normalized_z - 0.25f);
+        } else if (normalized_z < 0.75f) {
+            r = 4.0f * (normalized_z - 0.5f);
+            g = 1.0f;
+            b = 0.0f;
+        } else {
+            r = 1.0f;
+            g = 1.0f - 4.0f * (normalized_z - 0.75f);
+            b = 0.0f;
+        }
+        
+        // Draw filled cube with z-based color and hit-count based alpha
+        glColor4f(r, g, b, alpha * 0.3f);  // Filled cube with transparency
         DrawCubeFilled(center, voxel_size);
         
         // Draw edges with slightly higher alpha
-        glColor4f(1.0f, 1.0f, 1.0f, alpha * 0.6f);  // Edges more visible
+        glColor4f(r, g, b, alpha * 0.6f);  // Edges more visible
         DrawCube(center, voxel_size);
     }
     

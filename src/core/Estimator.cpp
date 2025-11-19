@@ -461,36 +461,9 @@ void Estimator::ProcessLidar(const LidarData& lidar) {
     // Iterated Kalman Filter Update with downsampled data
     UpdateWithLidar(downsampled_lidar);
     
-    // Update local map with downsampled scan (this rebuilds VoxelMap)
+    // Update local map with downsampled scan (only for keyframes)
+    // UpdateLocalMap internally checks if current frame is keyframe
     UpdateLocalMap(range_filtered_scan);
-    
-    // Mark voxels hit by current scan AFTER VoxelMap is rebuilt
-    if (m_voxel_map) {
-        m_voxel_map->ClearHitMarkers();
-        
-        Eigen::Matrix3f R_wb = m_current_state.m_rotation;
-        Eigen::Vector3f t_wb = m_current_state.m_position;
-        
-        // Transform scan points to world frame and mark hit voxels
-        for (const auto& pt : *range_filtered_scan) {
-            Eigen::Vector3f p_lidar(pt.x, pt.y, pt.z);
-            Eigen::Vector3f p_imu = m_params.R_il * p_lidar + m_params.t_il;
-            Eigen::Vector3f p_world = R_wb * p_imu + t_wb;
-            
-            Point3D world_pt;
-            world_pt.x = p_world.x();
-            world_pt.y = p_world.y();
-            world_pt.z = p_world.z();
-            
-            // Mark the voxel containing this point as hit
-            VoxelKey key(
-                static_cast<int>(std::floor(world_pt.x / m_voxel_map->GetVoxelSize())),
-                static_cast<int>(std::floor(world_pt.y / m_voxel_map->GetVoxelSize())),
-                static_cast<int>(std::floor(world_pt.z / m_voxel_map->GetVoxelSize()))
-            );
-            m_voxel_map->MarkVoxelAsHit(key);
-        }
-    }
     
     // Update statistics
     auto end_time = std::chrono::high_resolution_clock::now();
@@ -867,7 +840,7 @@ void Estimator::UpdateLocalMap(const PointCloudPtr scan) {
         // Check rotation threshold (from config)
         Eigen::AngleAxisf angle_axis(R_delta);
         float rotation_deg = std::abs(angle_axis.angle()) * 180.0f / M_PI;
-        
+
         if (translation >= m_params.keyframe_translation_threshold || 
             rotation_deg >= m_params.keyframe_rotation_threshold) {
             is_keyframe = true;

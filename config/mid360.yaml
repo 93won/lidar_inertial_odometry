@@ -29,19 +29,19 @@ estimator:
   scan_duration: 0.1          # LiDAR scan duration in seconds (100ms for Livox Avia)
   init_imu_samples: 100       # Number of IMU samples for initialization
   voxel_size: 0.4             # Voxel size in meters for VoxelMap
-  max_correspondences: 1000    # Maximum number of correspondences per frame
+  max_correspondences: 2000    # Maximum number of correspondences per frame
   max_correspondence_distance: 1.0  # Maximum distance for correspondence matching (meters)
   max_iterations: 10          # Maximum Gauss-Newton iterations
-  convergence_threshold: 1e-4 # Convergence threshold for optimization
+  convergence_threshold: 0.005 # Convergence threshold for optimization
   
   # Local map parameters
-  max_distance: 30.0           # Maximum distance to keep map points (meters)
+  max_distance: 20.0           # Maximum distance to keep map points (meters)
   voxel_culling_distance: 1.0  # Distance threshold for voxel culling from new scan (meters)
   max_voxel_hit_count: 10      # Maximum hit count for voxel occupancy (1-N, default: 10)
   
   # Keyframe parameters
   keyframe_translation_threshold: 1.0   # Translation threshold for keyframe (meters)
-  keyframe_rotation_threshold: 10.0     # Rotation threshold for keyframe (degrees)
+  keyframe_rotation_threshold: 30.0     # Rotation threshold for keyframe (degrees)
 
 # Viewer parameters
 viewer:

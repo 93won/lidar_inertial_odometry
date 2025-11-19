@@ -38,7 +38,7 @@ estimator:
   # Local map parameters
   max_distance: 50.0           # Maximum distance to keep map points (meters)
   voxel_culling_distance: 1.0  # Distance threshold for voxel culling from new scan (meters)
-  max_voxel_hit_count: 10      # Maximum hit count for voxel occupancy (1-N, default: 10)
+  max_voxel_hit_count: 3      # Maximum hit count for voxel occupancy (1-N, default: 10)
   
   # Keyframe parameters
   keyframe_translation_threshold: 1.0   # Translation threshold for keyframe (meters)
