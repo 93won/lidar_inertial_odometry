@@ -39,27 +39,28 @@ This will:
 
 ### Quick Start
 
-```bash
-cd build
-./lio_player ../config/avia.yaml /home/user/data/R3LIVE/hku_main_building
-```
 
-or
-
-```bash
-cd build
-./lio_player ../config/mid360.yaml /path/to/mid360_dataset
-```
 
 **Livox AVIA Dataset**:
 - **Download**: [Google Drive Link](https://drive.google.com/file/d/1NPtqg34vdAM-BMdqQ_pfRgVvzVVRuXd6/view?usp=sharing)
 - **Source**: [R3LIVE Dataset](https://github.com/hku-mars/r3live)
 - **Sensor**: Livox Avia LiDAR + Built-in IMU
 
+
+```bash
+cd build
+./lio_player ../config/avia.yaml /home/user/data/R3LIVE/hku_main_building
+```
+
 **Livox Mid-360 Dataset** :
 - **Download**: [Google Drive Link](https://drive.google.com/file/d/1VuzTaSFqwiK6E8N19AOB-KV6xgEf4554/view?usp=sharing)
 - **Source**: https://www.youtube.com/watch?v=u8siB0KLFLc
 - **Sensor**: Livox Mid-360 LiDAR + Built-in IMU
+```
+
+```bash
+cd build
+./lio_player ../config/mid360.yaml /path/to/mid360_dataset
 ```
 
 ## Project Structure
