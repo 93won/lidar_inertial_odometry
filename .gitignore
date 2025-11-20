@@ -43,6 +43,7 @@ thirdparty/*/*.so
 # Papers and benchmark data (large files, not for version control)
 papers/
 benchmark/
+scrips/
 
 # OS files
 .DS_Store
