@@ -28,8 +28,9 @@ LIOViewer::LIOViewer()
     , m_show_coordinate_frame("ui.3. Show Coordinate Frame", true, true)
     , m_show_map("ui.4. Show Map", true, true)  // Enable point cloud map by default
     , m_show_voxel_cubes("ui.5. Show Voxel Cubes", false, true)  // Disable voxel cubes by default
-    , m_auto_playback("ui.6. Auto Playback", true, true)  // Enable auto playback by default
-    , m_step_forward_button("ui.7. Step Forward", false, false)
+    , m_show_surfels("ui.6. Show Surfels", false, true)  // Enable surfel visualization by default
+    , m_auto_playback("ui.7. Auto Playback", true, true)  // Enable auto playback by default
+    , m_step_forward_button("ui.8. Step Forward", false, false)
     , m_frame_id("info.Frame ID", 0)
     , m_total_points("info.Total Points", 0)
     , m_point_size(2.0f)
@@ -275,6 +276,10 @@ void LIOViewer::RenderLoop() {
 
         if (m_show_voxel_cubes.Get() && voxel_map_copy && voxel_map_copy->GetVoxelCount() > 0) {
             DrawVoxelCubes(voxel_map_copy);  // Pass voxel_map_copy as parameter
+        }
+        
+        if (m_show_surfels.Get() && voxel_map_copy && voxel_map_copy->GetVoxelCount() > 0) {
+            DrawSurfels(voxel_map_copy);  // Draw L1 surfels with normals
         }
         
         if (m_show_map.Get() && voxel_map_copy && voxel_map_copy->GetVoxelCount() > 0) {
@@ -574,6 +579,100 @@ void LIOViewer::DrawCube(const Eigen::Vector3f& center, float size) {
         glVertex3f(vertices[v2][0], vertices[v2][1], vertices[v2][2]);
     }
     glEnd();
+}
+
+void LIOViewer::DrawSurfels(std::shared_ptr<VoxelMap> voxel_map) {
+    if (!voxel_map) return;
+    
+    // Get all L1 surfels
+    auto surfels = voxel_map->GetL1Surfels();
+    
+    if (surfels.empty()) {
+        return;
+    }
+    
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    
+    // Surfel disc radius = L1 voxel size (3 * L0 voxel size)
+    float disc_radius = voxel_map->GetVoxelSize() * 1.5f;  // Half of L1 size
+    const int num_segments = 20;  // Circle resolution
+    
+    for (const auto& surfel_data : surfels) {
+        const Eigen::Vector3f& centroid = std::get<0>(surfel_data);
+        const Eigen::Vector3f& normal = std::get<1>(surfel_data);
+        float planarity = std::get<2>(surfel_data);
+        
+        // Color based on planarity: more planar = more green
+        // planarity ranges from 0 (perfect plane) to 0.1 (threshold)
+        float green_intensity = 1.0f - (planarity / 0.1f);  // 1.0 for perfect plane, 0.0 at threshold
+        green_intensity = std::max(0.0f, std::min(1.0f, green_intensity));
+        
+        // Find two perpendicular vectors to the normal (local coordinate system on the plane)
+        Eigen::Vector3f u_axis, v_axis;
+        if (std::abs(normal.x()) < 0.9f) {
+            u_axis = Eigen::Vector3f(1, 0, 0).cross(normal).normalized();
+        } else {
+            u_axis = Eigen::Vector3f(0, 1, 0).cross(normal).normalized();
+        }
+        v_axis = normal.cross(u_axis).normalized();
+        
+        // Draw filled disc (surfel surface)
+        glColor4f(0.2f, green_intensity * 0.8f, 0.9f, 0.6f);  // Semi-transparent cyan-green
+        glBegin(GL_TRIANGLE_FAN);
+        glVertex3f(centroid.x(), centroid.y(), centroid.z());  // Center vertex
+        
+        for (int i = 0; i <= num_segments; ++i) {
+            float angle = 2.0f * M_PI * i / num_segments;
+            float cos_a = std::cos(angle);
+            float sin_a = std::sin(angle);
+            
+            // Point on circle: centroid + radius * (cos(θ)*u + sin(θ)*v)
+            Eigen::Vector3f circle_point = centroid + disc_radius * (cos_a * u_axis + sin_a * v_axis);
+            glVertex3f(circle_point.x(), circle_point.y(), circle_point.z());
+        }
+        glEnd();
+        
+        // Draw circle outline (border)
+        glLineWidth(2.0f);
+        glColor4f(0.0f, green_intensity, 1.0f, 0.9f);  // Brighter outline
+        glBegin(GL_LINE_LOOP);
+        for (int i = 0; i < num_segments; ++i) {
+            float angle = 2.0f * M_PI * i / num_segments;
+            float cos_a = std::cos(angle);
+            float sin_a = std::sin(angle);
+            
+            Eigen::Vector3f circle_point = centroid + disc_radius * (cos_a * u_axis + sin_a * v_axis);
+            glVertex3f(circle_point.x(), circle_point.y(), circle_point.z());
+        }
+        glEnd();
+        
+        // Draw normal vector as short arrow from center
+        float normal_length = disc_radius * 0.5f;
+        glLineWidth(2.5f);
+        glColor4f(1.0f, 1.0f, 0.0f, 0.95f);  // Yellow for normal
+        
+        Eigen::Vector3f normal_end = centroid + normal * normal_length;
+        
+        glBegin(GL_LINES);
+        glVertex3f(centroid.x(), centroid.y(), centroid.z());
+        glVertex3f(normal_end.x(), normal_end.y(), normal_end.z());
+        glEnd();
+        
+        // Small arrow head
+        float head_size = normal_length * 0.2f;
+        glBegin(GL_LINES);
+        Eigen::Vector3f tip1 = normal_end + u_axis * head_size - normal * head_size;
+        Eigen::Vector3f tip2 = normal_end - u_axis * head_size - normal * head_size;
+        glVertex3f(tip1.x(), tip1.y(), tip1.z());
+        glVertex3f(normal_end.x(), normal_end.y(), normal_end.z());
+        glVertex3f(tip2.x(), tip2.y(), tip2.z());
+        glVertex3f(normal_end.x(), normal_end.y(), normal_end.z());
+        glEnd();
+    }
+    
+    glDisable(GL_BLEND);
+    glLineWidth(1.0f);
 }
 
 void LIOViewer::DrawCurrentPose() {

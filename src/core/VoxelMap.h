@@ -15,6 +15,7 @@
 
 #include "PointCloudUtils.h"
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <Eigen/Dense>
 
@@ -151,12 +152,19 @@ public:
     /**
      * @brief Get number of occupied voxels
      */
-    size_t GetVoxelCount() const { return m_voxel_map.size(); }
+    size_t GetVoxelCount() const { return m_voxels_L0.size(); }
     
     /**
      * @brief Get point by global index
      */
     const Point3D& GetPoint(int index) const { return m_all_points[index]; }
+    
+    /**
+     * @brief Get centroid of a voxel as a Point3D
+     * @param key Voxel key
+     * @return Centroid as Point3D (with zero intensity and offset_time)
+     */
+    Point3D GetCentroidPoint(const VoxelKey& key) const;
     
     /**
      * @brief Get all occupied voxel keys for visualization
@@ -209,33 +217,97 @@ public:
      */
     std::vector<VoxelKey> GetHitVoxels() const;
     
-private:
     /**
-     * @brief Convert 3D point to voxel key
+     * @brief Get all L1 surfels for visualization
+     * @return Vector of tuples: (centroid, normal, planarity_score, L1_key)
      */
-    VoxelKey PointToVoxelKey(const Point3D& point) const;
+    std::vector<std::tuple<Eigen::Vector3f, Eigen::Vector3f, float, VoxelKey>> GetL1Surfels() const;
     
     /**
-     * @brief Get all 27 neighboring voxel keys (3x3x3 grid including center)
+     * @brief Get surfel information for the L1 voxel containing the given point
+     * @param point Query point in world frame
+     * @param normal Output: surfel normal
+     * @param centroid Output: surfel centroid
+     * @param planarity_score Output: planarity score
+     * @return True if the containing L1 voxel has a valid surfel
      */
-    std::vector<VoxelKey> GetNeighborVoxels(const VoxelKey& center) const;
+    bool GetSurfelAtPoint(const Point3D& point,
+                          Eigen::Vector3f& normal,
+                          Eigen::Vector3f& centroid,
+                          float& planarity_score) const;
+    
+private:
+    /**
+     * @brief Convert 3D point to voxel key at specified level
+     */
+    VoxelKey PointToVoxelKey(const Point3D& point, int level = 0) const;
+    
+    /**
+     * @brief Get parent voxel key
+     */
+    VoxelKey GetParentKey(const VoxelKey& key) const;
+    
+    /**
+     * @brief Register L0 voxel to parent hierarchy
+     */
+    void RegisterToParent(const VoxelKey& key_L0);
+    
+    /**
+     * @brief Unregister L0 voxel from parent hierarchy
+     */
+    void UnregisterFromParent(const VoxelKey& key_L0);
+    
+    /**
+     * @brief Get all neighboring voxel keys within a specified distance
+     */
+    std::vector<VoxelKey> GetNeighborVoxels(const VoxelKey& center, float search_distance) const;
     
     // ===== Member Variables =====
     
-    float m_voxel_size;  ///< Size of each voxel in meters
+    float m_voxel_size;  ///< Size of each voxel in meters (Level 0: 1×1×1)
     int m_max_hit_count; ///< Maximum hit count for occupancy (default: 10)
+    // ===== Hierarchical Voxel Structure (3 Levels) =====
     
-    /// Voxel data structure
-    struct VoxelData {
-        std::vector<int> point_indices;  ///< Point indices in this voxel
-        Eigen::Vector3f centroid;        ///< Weighted average centroid
-        int hit_count;                   ///< Occupancy count (for decay)
+    /// Level 0: Leaf nodes (1×1×1) - stores actual points
+    struct VoxelNode_L0 {
+        std::vector<int> point_indices;
+        Eigen::Vector3f centroid;
+        int hit_count;
         
-        VoxelData() : centroid(Eigen::Vector3f::Zero()), hit_count(1) {}
+        VoxelNode_L0() : centroid(Eigen::Vector3f::Zero()), hit_count(1) {}
     };
+    std::unordered_map<VoxelKey, VoxelNode_L0, VoxelKeyHash> m_voxels_L0;
     
-    /// Voxel hash map: VoxelKey -> VoxelData
-    std::unordered_map<VoxelKey, VoxelData, VoxelKeyHash> m_voxel_map;
+    /// Level 1: Parent nodes (3×3×3) - tracks occupied L0 children
+    struct VoxelNode_L1 {
+        int hit_count;
+        std::unordered_set<VoxelKey, VoxelKeyHash> occupied_children;  // L0 keys
+        
+        // Surfel data (only valid if has_surfel == true)
+        bool has_surfel;
+        Eigen::Vector3f surfel_normal;     // Plane normal vector
+        Eigen::Vector3f surfel_centroid;   // Plane centroid
+        Eigen::Matrix3f surfel_covariance; // Covariance matrix for plane fitting
+        float planarity_score;             // sigma_min / sigma_max (smaller = more planar)
+        
+        VoxelNode_L1() 
+            : hit_count(0)
+            , has_surfel(false)
+            , surfel_normal(Eigen::Vector3f::Zero())
+            , surfel_centroid(Eigen::Vector3f::Zero())
+            , surfel_covariance(Eigen::Matrix3f::Zero())
+            , planarity_score(1.0f) {}
+    };
+    std::unordered_map<VoxelKey, VoxelNode_L1, VoxelKeyHash> m_voxels_L1;
+    
+    /// Level 2: Grandparent nodes (9×9×9) - tracks occupied L1 children
+    struct VoxelNode_L2 {
+        int hit_count;
+        std::unordered_set<VoxelKey, VoxelKeyHash> occupied_children;  // L1 keys
+        
+        VoxelNode_L2() : hit_count(0) {}
+    };
+    std::unordered_map<VoxelKey, VoxelNode_L2, VoxelKeyHash> m_voxels_L2;
     
     /// Storage for all points (indexed by global index)
     std::vector<Point3D> m_all_points;

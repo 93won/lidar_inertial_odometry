@@ -470,7 +470,7 @@ void Estimator::ProcessLidar(const LidarData& lidar) {
         m_frame_count++;
         return;
     }
-   
+    
     // Iterated Kalman Filter Update with downsampled data
     UpdateWithLidar(downsampled_lidar);
     
@@ -541,6 +541,7 @@ void Estimator::UpdateWithLidar(const LidarData& lidar) {
     for (int outer_iter = 0; outer_iter < max_outer_iterations; outer_iter++) {
         // OUTER LOOP: Find correspondences at current state (expensive, ~50ms)
         auto start_corr = std::chrono::high_resolution_clock::now();
+
         auto correspondences = FindCorrespondences(lidar.cloud);
         auto end_corr = std::chrono::high_resolution_clock::now();
         double corr_time = std::chrono::duration<double, std::milli>(end_corr - start_corr).count();
@@ -721,16 +722,10 @@ Estimator::FindCorrespondences(const PointCloudPtr scan) {
     Eigen::Matrix3f R_wb = m_current_state.m_rotation;
     Eigen::Vector3f t_wb = m_current_state.m_position;
     
-    const int K = 5;  // Number of neighbors for plane fitting
-    const float max_neighbor_distance = static_cast<float>(m_params.max_correspondence_distance);  // From config
-    const float max_plane_distance = 0.1f;  // Maximum distance from point to fitted plane
+    const float max_point_to_plane_distance = 0.5f;  // Maximum distance from point to surfel plane
     const int max_correspondences = m_params.max_correspondences;  // Maximum number of correspondences to find
     
-    // PRE-TRANSFORM: Transform entire scan to world frame ONCE (major optimization)
-    PointCloudPtr scan_world = std::make_shared<PointCloud>();
-    scan_world->reserve(scan->size());
-    
-    // Build transformation matrix: T_world_lidar = T_world_body * T_body_lidar
+    // Build transformation matrix ONCE: T_world_lidar = T_world_body * T_body_lidar
     Eigen::Matrix4f T_wb = Eigen::Matrix4f::Identity();
     T_wb.block<3,3>(0,0) = R_wb;
     T_wb.block<3,1>(0,3) = t_wb;
@@ -741,117 +736,72 @@ Estimator::FindCorrespondences(const PointCloudPtr scan) {
     
     Eigen::Matrix4f T_wl = T_wb * T_il;  // Combined transformation
     
-    for (const auto& pt_scan : *scan) {
-        Eigen::Vector4f pt_homo(pt_scan.x, pt_scan.y, pt_scan.z, 1.0f);
-        Eigen::Vector4f pt_world_homo = T_wl * pt_homo;
-        scan_world->push_back(pt_world_homo.x(), pt_world_homo.y(), pt_world_homo.z());
-    }
-    
-    // 2. For each point in transformed scan, find correspondences
+    // Process points and find correspondences using L1 surfels
     int valid_correspondences = 0;
     int total_attempts = 0;
-    
-    for (size_t i = 0; i < scan_world->size(); ++i) {
-        // Check if we've reached the maximum number of correspondences
+    int no_surfel_count = 0;
+
+    for (size_t i = 0; i < scan->size(); ++i) {
+        // Early termination: stop when we have enough correspondences
         if (valid_correspondences >= max_correspondences) {
             break;
         }
         
         total_attempts++;
         
-        const auto& pt_world = scan_world->at(i);
+        // === 1. Transform point to world frame ===
+        const auto& pt_scan = scan->at(i);
+        Eigen::Vector4f pt_homo(pt_scan.x, pt_scan.y, pt_scan.z, 1.0f);
+        Eigen::Vector4f pt_world_homo = T_wl * pt_homo;
         
-        // Already in world frame - no transform needed!
+        // Create query point in world frame
         Point3D query_point;
-        query_point.x = pt_world.x;
-        query_point.y = pt_world.y;
-        query_point.z = pt_world.z;
+        query_point.x = pt_world_homo.x();
+        query_point.y = pt_world_homo.y();
+        query_point.z = pt_world_homo.z();
         
-        // 3. Find K nearest neighbors in map (use VoxelMap hash)
-        std::vector<int> neighbor_indices;
-        std::vector<float> neighbor_sq_distances;
+        // === 2. Get surfel from the L1 voxel containing this point ===
+        Eigen::Vector3f surfel_normal;
+        Eigen::Vector3f surfel_centroid;
+        float planarity_score;
         
-        int found = m_voxel_map->FindKNearestNeighbors(query_point, K, neighbor_indices, neighbor_sq_distances);
+        bool has_surfel = m_voxel_map->GetSurfelAtPoint(query_point, surfel_normal, surfel_centroid, planarity_score);
         
-        if (found < K) {
-            continue;  // Not enough neighbors
+        if (!has_surfel) {
+            no_surfel_count++;
+            continue;  // No surfel in this L1 voxel
         }
         
-        // Check distance threshold (use squared distance)
-        if (neighbor_sq_distances[K-1] > max_neighbor_distance * max_neighbor_distance) {
-            continue;  // Neighbors too far away
-        }
-        
-        // 4. Collect neighbor points for plane fitting directly from VoxelMap
-        std::vector<Eigen::Vector3f> neighbor_points;
-        neighbor_points.reserve(K);
-        
-        for (int j = 0; j < K; j++) {
-            const Point3D& neighbor_pt = m_voxel_map->GetPoint(neighbor_indices[j]);
-            neighbor_points.emplace_back(neighbor_pt.x, neighbor_pt.y, neighbor_pt.z);
-        }
-        
-        // 5. Fit plane to neighbors using covariance method (SVD)
-        // Compute centroid
-        Eigen::Vector3f centroid = Eigen::Vector3f::Zero();
-        for (const auto& pt : neighbor_points) {
-            centroid += pt;
-        }
-        centroid /= static_cast<float>(K);
-        
-        // Compute covariance matrix
-        Eigen::Matrix3f covariance = Eigen::Matrix3f::Zero();
-        for (const auto& pt : neighbor_points) {
-            Eigen::Vector3f diff = pt - centroid;
-            covariance += diff * diff.transpose();
-        }
-        covariance /= static_cast<float>(K);
-        
-        // SVD to find plane normal (smallest eigenvector)
-        Eigen::JacobiSVD<Eigen::Matrix3f> svd(covariance, Eigen::ComputeFullU);
-        Eigen::Vector3f plane_normal = svd.matrixU().col(2);  // Smallest singular value
-        
-        // Ensure normal points towards sensor (optional, for consistency)
-        Eigen::Vector3f p_world_vec(pt_world.x, pt_world.y, pt_world.z);
-        if (plane_normal.dot(p_world_vec - centroid) > 0) {
-            plane_normal = -plane_normal;
-        }
-        
-        // 6. Validate plane fit quality
-        // Check if all neighbors are close to the fitted plane
-        bool plane_valid = true;
-        for (const auto& pt : neighbor_points) {
-            float dist_to_plane = std::abs(plane_normal.dot(pt - centroid));
-            if (dist_to_plane > max_plane_distance) {
-                plane_valid = false;
-                break;
-            }
-        }
-        
-        if (!plane_valid) {
-            continue;  // Plane fit is poor (points too scattered)config.estimator.max_correspondences5
-        }
-        
-        // Check planarity using singular values
-        Eigen::Vector3f singular_values = svd.singularValues();
-        float planarity = singular_values(2) / singular_values(0);  // Should be small for good plane
-        
-        if (planarity > 0.1f) {
+        // === 3. Validate planarity (already checked during surfel creation, but double-check) ===
+        if (planarity_score > 0.1f) {
             continue;  // Not planar enough
         }
         
-        // 7. Add valid correspondence with plane information
-        // Plane equation: n^T * x + d = 0, where d = -n^T * centroid
-        // Point-to-plane distance: dis_to_plane = n^T * p_w + d
-        float plane_d = -plane_normal.dot(centroid);
+        // === 4. Calculate point-to-plane distance ===
+        Eigen::Vector3f p_world(query_point.x, query_point.y, query_point.z);
+        float dist_to_plane = std::abs(surfel_normal.dot(p_world - surfel_centroid));
         
-        // Store original lidar point (before transformation)
-        const auto& pt_scan_original = scan->at(i);
-        Eigen::Vector3f p_lidar(pt_scan_original.x, pt_scan_original.y, pt_scan_original.z);
+        if (dist_to_plane > max_point_to_plane_distance) {
+            continue;  // Point too far from plane
+        }
+        
+        // === 5. Add valid correspondence ===
+        // Plane equation: n^T * x + d = 0, where d = -n^T * centroid
+        float plane_d = -surfel_normal.dot(surfel_centroid);
+        
+        // Store original lidar point
+        Eigen::Vector3f p_lidar(pt_scan.x, pt_scan.y, pt_scan.z);
         
         // Store: (p_lidar, plane_normal_world, plane_d)
-        correspondences.emplace_back(p_lidar, plane_normal, plane_d);
+        correspondences.emplace_back(p_lidar, surfel_normal, plane_d);
         valid_correspondences++;
+    }
+    
+    // Log statistics (only if verbose or at lower frequency)
+    static int call_count = 0;
+    if (++call_count % 10 == 0) {
+        spdlog::debug("[FindCorrespondences] Attempts: {}, Valid: {}, No surfel: {}", 
+                      total_attempts, valid_correspondences, no_surfel_count);
     }
 
     return correspondences;
@@ -876,7 +826,6 @@ void Estimator::UpdateLocalMap(const PointCloudPtr scan) {
         m_first_keyframe = false;
         m_last_keyframe_position = t_wb;
         m_last_keyframe_rotation = R_wb;
-        spdlog::info("[Keyframe] First keyframe");
     } else {
         // Compute relative transformation T_delta = T_last^-1 * T_current
         // T_last = [R_last, t_last; 0, 1]
@@ -910,8 +859,6 @@ void Estimator::UpdateLocalMap(const PointCloudPtr scan) {
             m_last_keyframe_rotation = R_wb;
         }
     }
-
-    
     
     // ===== Add new scan to map (only for keyframes) =====
     auto start_transform = std::chrono::high_resolution_clock::now();
@@ -946,13 +893,13 @@ void Estimator::UpdateLocalMap(const PointCloudPtr scan) {
     // Get current sensor position in world frame
     Eigen::Vector3d sensor_position = t_wb.cast<double>();
     
-    // Update voxel map: add new points and remove voxels > voxel_culling_distance away from new scan
+    // Update voxel map: add new points and update hit counts based on visibility
     if (!m_voxel_map) {
         m_voxel_map = std::make_shared<VoxelMap>(static_cast<float>(m_params.voxel_size));
         m_voxel_map->SetMaxHitCount(m_params.max_voxel_hit_count);
     }
-    m_voxel_map->UpdateVoxelMap(transformed_scan, sensor_position, m_params.voxel_culling_distance, is_keyframe);
-    
+
+    m_voxel_map->UpdateVoxelMap(transformed_scan, sensor_position, m_params.max_map_distance, is_keyframe);
     auto end_voxelmap_update = std::chrono::high_resolution_clock::now();
     double voxelmap_update_time = std::chrono::duration<double, std::milli>(end_voxelmap_update - start_voxelmap_update).count();
     
@@ -961,9 +908,6 @@ void Estimator::UpdateLocalMap(const PointCloudPtr scan) {
     
     auto end_total = std::chrono::high_resolution_clock::now();
     double total_time = std::chrono::duration<double, std::milli>(end_total - start_total).count();
-    
-    spdlog::info("[Map Update] Added {} points, VoxelMap update: {:.2f}ms, Total: {:.2f}ms, Map size: {} voxels",
-                 added_count, voxelmap_update_time, total_time, m_voxel_map->GetVoxelCount());
 }
 
 void Estimator::CleanLocalMap() {

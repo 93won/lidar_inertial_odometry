@@ -8,7 +8,8 @@ Tightly-coupled LiDAR-Inertial Odometry using Iterated Extended Kalman Filter wi
 
 - **Iterated Extended Kalman Filter (IEKF)**: Direct LiDAR-IMU fusion with nested iteration for re-linearization and convergence
 - **Adaptive Robust Estimation**: Probabilistic Kernel Optimization (PKO) for automatic Huber loss scale tuning
-- **Incremental Voxel hashing for fast correspondence search**: Hash-based spatial indexing with O(1) lookup
+- **Incremental Hierarchical Voxel Map**: 3-level hash-based spatial indexing (L0/L1/L2) with occupied-only tracking for fast local KNN search
+- **Pre-computed Surfel Planes**: L1 voxels store fitted plane surfels (normal, centroid, covariance) computed via SVD, enabling O(1) correspondence finding without per-point KNN/SVD
 - **Motion compensation**: IMU-based undistortion for moving LiDAR scans
 
 ### Probabilistic Kernel Optimization (PKO)

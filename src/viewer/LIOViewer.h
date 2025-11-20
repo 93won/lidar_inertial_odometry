@@ -176,6 +176,11 @@ public:
     void SetShowVoxelCubes(bool show) { m_show_voxel_cubes = show; }
     
     /**
+     * @brief Set show surfels flag
+     */
+    void SetShowSurfels(bool show) { m_show_surfels = show; }
+    
+    /**
      * @brief Set auto playback mode
      */
     void SetAutoPlayback(bool auto_play) { m_auto_playback = auto_play; }
@@ -208,6 +213,7 @@ private:
     pangolin::Var<bool> m_show_coordinate_frame;       ///< Show coordinate frame checkbox
     pangolin::Var<bool> m_show_map;                    ///< Show map checkbox
     pangolin::Var<bool> m_show_voxel_cubes;            ///< Show voxel cubes checkbox
+    pangolin::Var<bool> m_show_surfels;                ///< Show L1 surfels checkbox
     pangolin::Var<bool> m_auto_playback;               ///< Auto playback mode
     pangolin::Var<bool> m_step_forward_button;         ///< Step forward button
     pangolin::Var<int> m_frame_id;                     ///< Current frame ID
@@ -258,6 +264,12 @@ private:
      * @param voxel_map Voxel map to render as cubes
      */
     void DrawVoxelCubes(std::shared_ptr<VoxelMap> voxel_map);
+    
+    /**
+     * @brief Draw L1 surfels with normal vectors
+     * @param voxel_map Voxel map containing surfel data
+     */
+    void DrawSurfels(std::shared_ptr<VoxelMap> voxel_map);
     
     /**
      * @brief Helper function to draw a single cube (wireframe)

@@ -151,7 +151,6 @@ public:
         double map_voxel_size = 0.2;          // m (deprecated, use voxel_size)
         int max_map_points = 100000;
         double max_map_distance = 50.0;       // m
-        double voxel_culling_distance = 5.0;  // m (distance threshold for voxel culling from new scan)
         int max_voxel_hit_count = 10;         // Maximum hit count for voxel occupancy
         double min_plane_points = 5;
         

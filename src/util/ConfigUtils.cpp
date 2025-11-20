@@ -34,7 +34,6 @@ void SetDefaultConfig(LIOConfig& config) {
     config.estimator.max_iterations = 10;
     config.estimator.convergence_threshold = 1e-4;
     config.estimator.max_distance = 50.0;
-    config.estimator.voxel_culling_distance = 5.0;
     config.estimator.max_voxel_hit_count = 10;
     config.estimator.frustum_fov_horizontal = 90.0;
     config.estimator.frustum_fov_vertical = 90.0;
@@ -119,8 +118,6 @@ bool LoadConfig(const std::string& config_path, LIOConfig& config) {
                 config.estimator.convergence_threshold = estimator["convergence_threshold"].as<double>();
             if (estimator["max_distance"]) 
                 config.estimator.max_distance = estimator["max_distance"].as<double>();
-            if (estimator["voxel_culling_distance"]) 
-                config.estimator.voxel_culling_distance = estimator["voxel_culling_distance"].as<double>();
             if (estimator["max_voxel_hit_count"]) 
                 config.estimator.max_voxel_hit_count = estimator["max_voxel_hit_count"].as<int>();
             if (estimator["frustum_fov_horizontal"]) 
