@@ -1,6 +1,6 @@
-# LiDAR-Inertial Odometry
+# Surfel-LIO
 
-Tightly-coupled LiDAR-Inertial Odometry using Iterated Extended Kalman Filter with direct point-to-plane residuals.
+Surfel-LIO: Efficient LiDAR-Inertial Odometry via Pre-computed Surfels in Hierarchical Voxel Hash Maps
 
 ### MIT License
 
