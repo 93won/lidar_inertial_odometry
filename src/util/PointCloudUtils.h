@@ -342,43 +342,95 @@ bool SavePointCloudPly(const std::string& filename, const PointCloud::ConstPtr& 
 // ===== Spatial Data Structures and Filters =====
 
 /**
- * @brief Voxel grid downsampling filter
+ * @brief Voxel grid downsampling filter with planarity-based filtering
+ * Uses relaxed planarity thresholds compared to VoxelMap surfel creation
  */
 class VoxelGrid {
 public:
-    VoxelGrid() : m_leaf_size(0.01f) {}
+    VoxelGrid() 
+        : m_leaf_size(0.01f)
+        , m_planarity_threshold(0.1f)  // Default: relaxed threshold for downsampling
+                                        // Can be overridden via SetPlanarityThreshold()
+                                        // Config file: scan_planarity_threshold (0.1f)
+        , m_enable_planarity_filter(true)
+    {}
     
     void SetLeafSize(float size) { m_leaf_size = size; }
     
     void SetInputCloud(const PointCloud::ConstPtr& cloud) { m_input_cloud = cloud; }
     
+    /**
+     * @brief Enable/disable planarity-based filtering during downsampling
+     * @param enable If true, only planar points are output
+     */
+    void SetPlanarityFilter(bool enable) { m_enable_planarity_filter = enable; }
+    
+    /**
+     * @brief Set planarity threshold for filtering
+     * @param threshold Planarity score threshold (sigma_min / sigma_max)
+     *                  Points with planarity < threshold are kept (more planar)
+     *                  Default: 0.1f (relaxed for input scan filtering)
+     *                  VoxelMap surfel uses: 0.01f (strict for map quality)
+     */
+    void SetPlanarityThreshold(float threshold) { m_planarity_threshold = threshold; }
+    
     void Filter(PointCloud& output);
     
 private:
-    struct WeightedCentroid {
-        Point3D centroid;
-        float weight;
-        
-        WeightedCentroid() : centroid(0, 0, 0), weight(0.0f) {}
+    struct VoxelPoints {
+        std::vector<Point3D> points;
         
         void AddPoint(const Point3D& new_point) {
-            if (weight == 0.0f) {
-                centroid = new_point;
-                weight = 1.0f;
-            } else {
-                float total_weight = weight + 1.0f;
-                float old_ratio = weight / total_weight;
-                float new_ratio = 1.0f / total_weight;
-                
-                centroid.x = old_ratio * centroid.x + new_ratio * new_point.x;
-                centroid.y = old_ratio * centroid.y + new_ratio * new_point.y;
-                centroid.z = old_ratio * centroid.z + new_ratio * new_point.z;
-                
-                weight = total_weight;
-            }
+            points.push_back(new_point);
         }
         
-        Point3D GetCentroid() const { return centroid; }
+        float CalculatePlanarity() const {
+            if (points.size() < 3) {
+                return 1.0f;  // Not enough points for planarity check
+            }
+            
+            // Compute centroid
+            Eigen::Vector3f centroid = Eigen::Vector3f::Zero();
+            for (const auto& pt : points) {
+                centroid += Eigen::Vector3f(pt.x, pt.y, pt.z);
+            }
+            centroid /= static_cast<float>(points.size());
+            
+            // Compute covariance matrix
+            Eigen::Matrix3f covariance = Eigen::Matrix3f::Zero();
+            for (const auto& pt : points) {
+                Eigen::Vector3f diff = Eigen::Vector3f(pt.x, pt.y, pt.z) - centroid;
+                covariance += diff * diff.transpose();
+            }
+            covariance /= static_cast<float>(points.size());
+            
+            // SVD decomposition
+            Eigen::JacobiSVD<Eigen::Matrix3f> svd(covariance, Eigen::ComputeFullU | Eigen::ComputeFullV);
+            Eigen::Vector3f singular_values = svd.singularValues();
+            
+            // Planarity: sigma_min / sigma_max
+            // Lower values = more planar
+            float planarity = singular_values(2) / (singular_values(0) + 1e-6f);
+            return planarity;
+        }
+        
+        Point3D GetCentroid() const {
+            if (points.empty()) {
+                return Point3D(0, 0, 0);
+            }
+            
+            Point3D centroid(0, 0, 0);
+            for (const auto& pt : points) {
+                centroid.x += pt.x;
+                centroid.y += pt.y;
+                centroid.z += pt.z;
+            }
+            centroid.x /= static_cast<float>(points.size());
+            centroid.y /= static_cast<float>(points.size());
+            centroid.z /= static_cast<float>(points.size());
+            
+            return centroid;
+        }
     };
     
     struct VoxelKey {
@@ -401,6 +453,8 @@ private:
     }
     
     float m_leaf_size;
+    float m_planarity_threshold;
+    bool m_enable_planarity_filter;
     PointCloud::ConstPtr m_input_cloud;
 };
 

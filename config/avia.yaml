@@ -32,6 +32,10 @@ estimator:
   voxel_size: 0.5             # Voxel size in meters for VoxelMap
   max_iterations: 10          # Maximum Gauss-Newton iterations
   convergence_threshold: 0.005 # Convergence threshold for optimization
+
+  scan_planarity_threshold: 0.05  # Planarity threshold for input scan downsampling (relaxed)
+  map_planarity_threshold: 0.1  # Planarity threshold for VoxelMap surfel creation (strict)
+  
   
   # Local map parameters
   max_distance: 50.0           # Maximum distance to keep map points (meters)

@@ -450,6 +450,8 @@ int main(int argc, char** argv) {
     estimator.m_params.frustum_max_range = config.estimator.frustum_max_range;
     estimator.m_params.keyframe_translation_threshold = config.estimator.keyframe_translation_threshold;
     estimator.m_params.keyframe_rotation_threshold = config.estimator.keyframe_rotation_threshold;
+    estimator.m_params.scan_planarity_threshold = config.estimator.scan_planarity_threshold;
+    estimator.m_params.map_planarity_threshold = config.estimator.map_planarity_threshold;
     
     // Configure extrinsics from config
     estimator.m_params.R_il = config.extrinsics.R_il.cast<float>();

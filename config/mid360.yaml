@@ -36,6 +36,9 @@ estimator:
   max_distance: 50.0           # Maximum distance to keep map points (meters)
   max_voxel_hit_count: 10    # Maximum hit count for voxel occupancy (1-N, default: 10)
   voxel_hierarchy_factor: 3    # L1 voxel factor: L1 = factor × L0 (e.g., 3 = 3×3×3, 5 = 5×5×5, 7 = 7×7×7)
+
+  scan_planarity_threshold: 0.05  # Planarity threshold for input scan downsampling (relaxed)
+  map_planarity_threshold: 0.1  # Planarity threshold for VoxelMap surfel creation (strict)
   
   # Keyframe parameters
   keyframe_translation_threshold: 1.0   # Translation threshold for keyframe (meters)

@@ -77,25 +77,75 @@ void VoxelGrid::Filter(PointCloud& output) {
         return;
     }
     
-    // Use map to store weighted centroids for each voxel
-    std::map<VoxelKey, WeightedCentroid> voxel_map;
+    // Use map to store all points in each voxel
+    std::map<VoxelKey, VoxelPoints> voxel_map;
     
-    // Process points one by one with weighted averaging
+    // Process points one by one, accumulating into voxels
     for (size_t i = 0; i < m_input_cloud->size(); ++i) {
         const Point3D& point = m_input_cloud->at(i);
         VoxelKey voxel_key = GetVoxelKey(point);
         
-        auto& weighted_centroid = voxel_map[voxel_key];
-        weighted_centroid.AddPoint(point);
+        auto& voxel_points = voxel_map[voxel_key];
+        voxel_points.AddPoint(point);
     }
     
     output.clear();
     output.reserve(voxel_map.size());
     
-    // Extract final centroids from each voxel
-    for (const auto& voxel : voxel_map) {
-        output.push_back(voxel.second.GetCentroid());
+    size_t total_voxels = voxel_map.size();
+    size_t planar_voxels = 0;
+    float min_planarity = 1.0f;
+    float max_planarity = 0.0f;
+    float sum_planarity = 0.0f;
+    
+    // Process each voxel: compute planarity and filter
+    for (auto& voxel : voxel_map) {
+        VoxelPoints& voxel_points = voxel.second;
+        
+        // If planarity filtering is enabled, check planarity
+        if (m_enable_planarity_filter) {
+            float planarity = voxel_points.CalculatePlanarity();
+            
+            // Track statistics
+            min_planarity = std::min(min_planarity, planarity);
+            max_planarity = std::max(max_planarity, planarity);
+            sum_planarity += planarity;
+            
+            // Only output centroid if planarity is below threshold (more planar)
+            if (planarity > m_planarity_threshold) {
+                // Non-planar voxel - skip it
+                continue;
+            }
+            
+            planar_voxels++;
+        } else {
+            planar_voxels++;
+        }
+        
+        // Extract and add centroid to output
+        output.push_back(voxel_points.GetCentroid());
     }
+    
+    // // Log statistics
+    // if (m_enable_planarity_filter) {
+    //     float avg_planarity = (total_voxels > 0) ? sum_planarity / total_voxels : 0.0f;
+    //     float retention_rate = (total_voxels > 0) ? (100.0f * planar_voxels / total_voxels) : 0.0f;
+        
+    //     spdlog::info("[VoxelGrid] Downsampling with Planarity Filter:");
+    //     spdlog::info("  Input points: {}", m_input_cloud->size());
+    //     spdlog::info("  Total voxels (before filter): {}", total_voxels);
+    //     spdlog::info("  Planar voxels (after filter): {} ({:.1f}%)", planar_voxels, retention_rate);
+    //     spdlog::info("  Voxel planarity stats:");
+    //     spdlog::info("    - Min planarity: {:.6f}", min_planarity);
+    //     spdlog::info("    - Max planarity: {:.6f}", max_planarity);
+    //     spdlog::info("    - Avg planarity: {:.6f}", avg_planarity);
+    //     spdlog::info("    - Threshold: {:.6f}", m_planarity_threshold);
+    //     spdlog::info("  Output points: {}", output.size());
+    // } else {
+    //     spdlog::info("[VoxelGrid] Downsampling (no planarity filter):");
+    //     spdlog::info("  Input points: {}", m_input_cloud->size());
+    //     spdlog::info("  Output voxels/points: {}", output.size());
+    // }
 }
 
 // ===== RangeFilter Implementation =====

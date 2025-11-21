@@ -288,8 +288,7 @@ void VoxelMap::UpdateVoxelMap(const PointCloudPtr& new_cloud,
     // Step 6: Create/update surfels for affected L1 voxels
     auto start_step6 = std::chrono::high_resolution_clock::now();
     const int MIN_OCCUPIED_CHILDREN = 5;  // Minimum 5 occupied L0 voxels required to create surfel
-    const float MAX_PLANARITY_SCORE = 0.01f;  // Consider as planar if sigma_min / sigma_max < 0.1
-    const float MAX_POINT_TO_PLANE_DIST = 0.05f;  // Max distance for incremental update (5cm)
+    const float MAX_POINT_TO_PLANE_DIST = 0.05f;  // Max distance for incremental update (5cm, strict for map quality)
     
     int surfels_created = 0;
     int surfels_skipped = 0;
@@ -384,7 +383,7 @@ void VoxelMap::UpdateVoxelMap(const PointCloudPtr& new_cloud,
         // Planarity check: sigma_min / sigma_max should be small
         float planarity = singular_values(2) / (singular_values(0) + 1e-6f);
         
-        if (planarity > MAX_PLANARITY_SCORE) {
+        if (planarity > m_planarity_threshold) {
             // Not planar enough - clear all L0 children
             node_L1.has_surfel = false;
             

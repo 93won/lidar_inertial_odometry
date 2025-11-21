@@ -146,6 +146,12 @@ public:
         int max_iterations = 10;
         double convergence_threshold = 1e-3;
         
+        // Planarity filtering parameters
+        double scan_planarity_threshold = 0.1;    // Threshold for input scan downsampling (relaxed)
+                                                   // Filters non-planar voxels during downsampling (~50% reduction)
+        double map_planarity_threshold = 0.01;    // Threshold for VoxelMap surfel creation (strict)
+                                                   // Must be stricter than scan_planarity_threshold
+        
         // Local map parameters
         double voxel_size = 0.4;              // m (voxel size for downsampling and VoxelMap)
         double map_voxel_size = 0.2;          // m (deprecated, use voxel_size)

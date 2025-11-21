@@ -39,6 +39,10 @@ struct LIOConfig {
         int max_iterations;             // Maximum ICP iterations
         double convergence_threshold;   // Convergence threshold for ICP
         
+        // Planarity filtering parameters
+        double scan_planarity_threshold;  // Planarity threshold for input scan downsampling (relaxed)
+        double map_planarity_threshold;   // Planarity threshold for VoxelMap surfel creation (strict)
+        
         // Local map parameters
         double max_distance;            // Maximum distance for map points (meters)
         int max_voxel_hit_count;        // Maximum hit count for voxel occupancy (1-N)

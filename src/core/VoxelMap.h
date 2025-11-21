@@ -101,6 +101,14 @@ public:
     void SetHierarchyFactor(int factor);
     
     /**
+     * @brief Set planarity threshold for surfel creation
+     * @param threshold Planarity threshold (sigma_min / sigma_max)
+     *                  Lower values = stricter planarity requirement
+     *                  Default: 0.01 (very strict for map quality)
+     */
+    void SetPlanarityThreshold(float threshold) { m_planarity_threshold = threshold; }
+    
+    /**
      * @brief Get current hierarchy factor
      */
     int GetHierarchyFactor() const { return m_hierarchy_factor; }
@@ -267,6 +275,7 @@ private:
     float m_voxel_size;  ///< Size of each voxel in meters (Level 0: 1×1×1)
     int m_max_hit_count; ///< Maximum hit count for occupancy (default: 10)
     int m_hierarchy_factor; ///< L1 voxel factor: L1 = factor × L0 (default: 3 for 3×3×3)
+    float m_planarity_threshold = 0.01f; ///< Planarity threshold for surfel creation (sigma_min/sigma_max)
     
     // ===== Hierarchical Voxel Structure (2 Levels) =====
     

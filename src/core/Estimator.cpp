@@ -442,6 +442,8 @@ void Estimator::ProcessLidar(const LidarData& lidar) {
     VoxelGrid scan_filter;
     scan_filter.SetInputCloud(undistorted_cloud);
     scan_filter.SetLeafSize(static_cast<float>(m_params.voxel_size));  // Use config voxel size for input scan
+    scan_filter.SetPlanarityFilter(true);  // Enable planarity-based filtering
+    scan_filter.SetPlanarityThreshold(static_cast<float>(m_params.scan_planarity_threshold));  // Use config threshold
     scan_filter.Filter(*downsampled_scan);
     auto end_downsample = std::chrono::high_resolution_clock::now();
     double time_downsample = std::chrono::duration<double, std::milli>(end_downsample - start_downsample).count();
@@ -784,6 +786,8 @@ Estimator::FindCorrespondences(const PointCloudPtr scan) {
         // === 5. Add valid correspondence ===
         // Plane equation: n^T * x + d = 0, where d = -n^T * centroid
         float plane_d = -surfel_normal.dot(surfel_centroid);
+
+ 
         
         // Store original lidar point
         Eigen::Vector3f p_lidar(pt_scan.x, pt_scan.y, pt_scan.z);
@@ -889,6 +893,7 @@ void Estimator::UpdateLocalMap(const PointCloudPtr scan) {
         m_voxel_map = std::make_shared<VoxelMap>(static_cast<float>(m_params.voxel_size));
         m_voxel_map->SetMaxHitCount(m_params.max_voxel_hit_count);
         m_voxel_map->SetHierarchyFactor(m_params.voxel_hierarchy_factor);
+        m_voxel_map->SetPlanarityThreshold(static_cast<float>(m_params.map_planarity_threshold));
     }
 
     m_voxel_map->UpdateVoxelMap(transformed_scan, sensor_position, m_params.max_map_distance, is_keyframe);
@@ -929,6 +934,7 @@ void Estimator::CleanLocalMap() {
             m_voxel_map = std::make_shared<VoxelMap>(static_cast<float>(m_params.voxel_size));
             m_voxel_map->SetMaxHitCount(m_params.max_voxel_hit_count);
             m_voxel_map->SetHierarchyFactor(m_params.voxel_hierarchy_factor);
+            m_voxel_map->SetPlanarityThreshold(static_cast<float>(m_params.map_planarity_threshold));
             m_voxel_map->AddPointCloud(m_map_cloud);
             spdlog::debug("[Estimator] VoxelMap rebuilt after cleaning");
         }

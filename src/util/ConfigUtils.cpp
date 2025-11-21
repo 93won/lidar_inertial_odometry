@@ -33,6 +33,8 @@ void SetDefaultConfig(LIOConfig& config) {
     config.estimator.max_correspondence_distance = 1.0;
     config.estimator.max_iterations = 10;
     config.estimator.convergence_threshold = 1e-4;
+    config.estimator.scan_planarity_threshold = 0.1;  // Relaxed threshold for input scan downsampling
+    config.estimator.map_planarity_threshold = 0.01;  // Strict threshold for VoxelMap surfel
     config.estimator.max_distance = 50.0;
     config.estimator.max_voxel_hit_count = 10;
     config.estimator.voxel_hierarchy_factor = 3;  // Default: 3×3×3 (L1 = 3 × L0)
@@ -139,6 +141,10 @@ bool LoadConfig(const std::string& config_path, LIOConfig& config) {
                 config.estimator.keyframe_translation_threshold = estimator["keyframe_translation_threshold"].as<double>();
             if (estimator["keyframe_rotation_threshold"]) 
                 config.estimator.keyframe_rotation_threshold = estimator["keyframe_rotation_threshold"].as<double>();
+            if (estimator["scan_planarity_threshold"]) 
+                config.estimator.scan_planarity_threshold = estimator["scan_planarity_threshold"].as<double>();
+            if (estimator["map_planarity_threshold"]) 
+                config.estimator.map_planarity_threshold = estimator["map_planarity_threshold"].as<double>();
         }
         
         // Load viewer parameters
