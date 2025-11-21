@@ -288,7 +288,7 @@ void VoxelMap::UpdateVoxelMap(const PointCloudPtr& new_cloud,
     // Step 6: Create/update surfels for affected L1 voxels
     auto start_step6 = std::chrono::high_resolution_clock::now();
     const int MIN_OCCUPIED_CHILDREN = 5;  // Minimum 5 occupied L0 voxels required to create surfel
-    const float MAX_PLANARITY_SCORE = 0.1f;  // Consider as planar if sigma_min / sigma_max < 0.1
+    const float MAX_PLANARITY_SCORE = 0.01f;  // Consider as planar if sigma_min / sigma_max < 0.1
     const float MAX_POINT_TO_PLANE_DIST = 0.05f;  // Max distance for incremental update (5cm)
     
     int surfels_created = 0;
@@ -384,21 +384,21 @@ void VoxelMap::UpdateVoxelMap(const PointCloudPtr& new_cloud,
         // Planarity check: sigma_min / sigma_max should be small
         float planarity = singular_values(2) / (singular_values(0) + 1e-6f);
         
-        // if (planarity > MAX_PLANARITY_SCORE) {
-        //     // Not planar enough - clear all L0 children
-        //     node_L1.has_surfel = false;
+        if (planarity > MAX_PLANARITY_SCORE) {
+            // Not planar enough - clear all L0 children
+            node_L1.has_surfel = false;
             
-        //     // Clear all L0 children of this L1 voxel (set hit_count to 0)
-        //     for (const VoxelKey& key_L0 : node_L1.occupied_children) {
-        //         auto it_L0 = m_voxels_L0.find(key_L0);
-        //         if (it_L0 != m_voxels_L0.end()) {
-        //             it_L0->second.hit_count = 0;  // Mark for removal
-        //         }
-        //     }
-        //     node_L1.occupied_children.clear();  // Clear children list
+            // Clear all L0 children of this L1 voxel (set hit_count to 0)
+            for (const VoxelKey& key_L0 : node_L1.occupied_children) {
+                auto it_L0 = m_voxels_L0.find(key_L0);
+                if (it_L0 != m_voxels_L0.end()) {
+                    it_L0->second.hit_count = 0;  // Mark for removal
+                }
+            }
+            node_L1.occupied_children.clear();  // Clear children list
             
-        //     continue;
-        // }
+            continue;
+        }
         
         // Extract plane normal (smallest eigenvector)
         Eigen::Vector3f normal = svd.matrixU().col(2);
