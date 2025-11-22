@@ -2,6 +2,8 @@
 
 ### MIT License
 
+ROS2 Wrapper: https://github.com/93won/lio_ros_wrapper
+
 ## Features
 
 - **Iterated Extended Kalman Filter (IEKF)**: Direct LiDAR-IMU fusion with nested iteration for re-linearization and convergence
