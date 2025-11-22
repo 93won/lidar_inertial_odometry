@@ -51,9 +51,9 @@ struct LIOConfig {
         double frustum_fov_vertical;    // Frustum FOV vertical (degrees)
         double frustum_max_range;       // Maximum range for frustum culling (meters)
         
-        // Keyframe parameters
-        double keyframe_translation_threshold;  // Translation threshold for keyframe (meters)
-        double keyframe_rotation_threshold;     // Rotation threshold for keyframe (degrees)
+        // Keyframe parameters (distance/rotation based)
+        double keyframe_translation_threshold;  // meters - triggers keyframe when moved > threshold
+        double keyframe_rotation_threshold;     // degrees - triggers keyframe when rotated > threshold
     } estimator;
     
     // Viewer parameters

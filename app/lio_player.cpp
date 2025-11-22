@@ -453,6 +453,12 @@ int main(int argc, char** argv) {
     estimator.m_params.scan_planarity_threshold = config.estimator.scan_planarity_threshold;
     estimator.m_params.map_planarity_threshold = config.estimator.map_planarity_threshold;
     
+    // Configure IMU noise parameters from config
+    estimator.m_params.gyr_noise_std = config.imu.gyro_noise_density;
+    estimator.m_params.acc_noise_std = config.imu.acc_noise_density;
+    estimator.m_params.gyr_bias_noise_std = config.imu.gyro_bias_random_walk;
+    estimator.m_params.acc_bias_noise_std = config.imu.acc_bias_random_walk;
+    
     // Configure extrinsics from config
     estimator.m_params.R_il = config.extrinsics.R_il.cast<float>();
     estimator.m_params.t_il = config.extrinsics.t_il.cast<float>();
@@ -460,15 +466,24 @@ int main(int argc, char** argv) {
     // Configure gravity from config
     estimator.m_params.gravity = config.imu.gravity.cast<float>();
     
+    // Update process noise matrix with new IMU parameters
+    estimator.UpdateProcessNoise();
+    
     spdlog::info("[Estimator] Configured from YAML:");
     spdlog::info("  Voxel size: {:.2f} m", estimator.m_params.voxel_size);
     spdlog::info("  Frustum FOV: {:.1f}° × {:.1f}°", 
                  estimator.m_params.frustum_fov_horizontal, 
                  estimator.m_params.frustum_fov_vertical);
     spdlog::info("  Frustum range: {:.1f} m", estimator.m_params.frustum_max_range);
-    spdlog::info("  Keyframe thresholds: {:.2f} m, {:.1f}°", 
+    spdlog::info("  Keyframe thresholds: translation={:.2f}m, rotation={:.1f}°", 
                  estimator.m_params.keyframe_translation_threshold,
                  estimator.m_params.keyframe_rotation_threshold);
+    spdlog::info("  IMU noise: gyr={:.4f} rad/s, acc={:.4f} m/s²",
+                 estimator.m_params.gyr_noise_std,
+                 estimator.m_params.acc_noise_std);
+    spdlog::info("  IMU bias random walk: gyr={:.6f} rad/s², acc={:.6f} m/s³",
+                 estimator.m_params.gyr_bias_noise_std,
+                 estimator.m_params.acc_bias_noise_std);
     spdlog::info("  Extrinsics t_il: [{:.5f}, {:.5f}, {:.5f}]",
                  estimator.m_params.t_il.x(), 
                  estimator.m_params.t_il.y(), 
@@ -656,8 +671,6 @@ int main(int argc, char** argv) {
                 if (lidar_frame_count - last_progress_frame >= 100) {
                     auto current_time = std::chrono::high_resolution_clock::now();
                     double elapsed = std::chrono::duration<double>(current_time - processing_start).count();
-                    spdlog::info("[Progress] Processed {} LiDAR frames ({:.1f}s elapsed, {:.2f} fps)",
-                                lidar_frame_count, elapsed, lidar_frame_count / elapsed);
                     last_progress_frame = lidar_frame_count;
                 }
             } else {
@@ -722,6 +735,25 @@ int main(int argc, char** argv) {
         spdlog::info("✓ Trajectory saved successfully ({} poses)", trajectory_with_timestamps.size());
     } else {
         spdlog::error("Failed to open trajectory file: {}", traj_output_path);
+    }
+    spdlog::info("");
+    
+    // Save processing times to file
+    std::string proc_time_output_path = dataset_path + "/ours_processing_time.txt";
+    spdlog::info("Saving processing times to: {}", proc_time_output_path);
+    
+    const auto& processing_times = estimator.GetProcessingTimes();
+    std::ofstream proc_time_file(proc_time_output_path);
+    if (proc_time_file.is_open()) {
+        // Write each frame's processing time in milliseconds
+        for (double time_ms : processing_times) {
+            proc_time_file << std::fixed << std::setprecision(3) << time_ms << "\n";
+        }
+        
+        proc_time_file.close();
+        spdlog::info("✓ Processing times saved successfully ({} frames)", processing_times.size());
+    } else {
+        spdlog::error("Failed to open processing time file: {}", proc_time_output_path);
     }
     spdlog::info("");
     

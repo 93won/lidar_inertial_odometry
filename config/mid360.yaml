@@ -28,23 +28,27 @@ estimator:
   enable_undistortion: true
   scan_duration: 0.1          # LiDAR scan duration in seconds (100ms for Livox Avia)
   init_imu_samples: 100       # Number of IMU samples for initialization
-  voxel_size: 0.4            # Voxel size in meters for VoxelMap
-  max_iterations: 10          # Maximum Gauss-Newton iterations
+  voxel_size: 0.5            # Voxel size in meters for VoxelMap
+  max_iterations: 4          # Maximum Gauss-Newton iterations
   convergence_threshold: 0.005 # Convergence threshold for optimization
 
   scan_planarity_threshold: 0.05  # Planarity threshold for input scan downsampling (relaxed)
-  map_planarity_threshold: 0.1  # Planarity threshold for VoxelMap surfel creation (strict)
+  map_planarity_threshold: 0.1  # Planarity threshold for VoxelMap surfel creation
 
-  # Local map parameters
-  max_distance: 50.0           # Maximum distance to keep map points (meters)
-  max_voxel_hit_count: 10    # Maximum hit count for voxel occupancy (1-N, default: 10)
-  voxel_hierarchy_factor: 3    # L1 voxel factor: L1 = factor × L0 (e.g., 3 = 3×3×3, 5 = 5×5×5, 7 = 7×7×7)
+  max_distance: 50.0           # Maximum distance for lidar filtering (meters)
+  max_voxel_hit_count: 10        # Maximum hit count for voxel occupancy (1-N, default: 10)
+  voxel_hierarchy_factor: 3      # L1 voxel factor: L1 = factor × L0 (e.g., 3 = 3×3×3, 5 = 5×5×5, 7 = 7×7×7)
+
+  # Keyframe parameters (distance/rotation based)
+  keyframe_translation_threshold: 1.0   # meters - triggers keyframe when moved > threshold
+  keyframe_rotation_threshold: 5.0     # degrees - triggers keyframe when rotated > threshold
+                                         # Translation: Larger (1.0m) = fewer KF, Smaller (0.2m) = more KF
+                                         # Rotation: Larger (20°) = fewer KF, Smaller (5°) = more KF
+                                         # Recommended: trans=0.3-0.7m, rot=5-15°
+
 
 
   
-  # Keyframe parameters
-  keyframe_translation_threshold: 1.0   # Translation threshold for keyframe (meters)
-  keyframe_rotation_threshold: 30.0     # Rotation threshold for keyframe (degrees)
 
 # Viewer parameters
 viewer:
@@ -64,11 +68,11 @@ viewer:
 
 # Playback parameters
 playback:
-  playback_speed: 10.0          # Playback speed multiplier
+  playback_speed: 100.0          # Playback speed multiplier
 
 imu:
   gyro_noise_density: 0.01     # Gyroscope noise density [rad/s/sqrt(Hz)]
-  acc_noise_density: 0.01      # Accelerometer noise density [m/s^2/sqrt(Hz)]
+  acc_noise_density: 0.1      # Accelerometer noise density [m/s^2/sqrt(Hz)]
   gyro_bias_random_walk: 0.0001  # Gyroscope bias random walk [rad/s^2/sqrt(Hz)]
-  acc_bias_random_walk: 0.0001   # Accelerometer bias random walk [m/s^3/sqrt(Hz)]
+  acc_bias_random_walk: 0.001   # Accelerometer bias random walk [m/s^3/sqrt(Hz)]
   gravity: [0.0, 0.0, -9.81]      # Gravity vector [m/s^2]

@@ -92,6 +92,19 @@ Estimator::~Estimator() {
     std::lock_guard<std::mutex> lock_stats(m_stats_mutex);
 }
 
+void Estimator::UpdateProcessNoise() {
+    // Update process noise matrix (Q) with current parameters
+    m_process_noise = Eigen::Matrix<float, 18, 18>::Identity();
+    m_process_noise.block<3,3>(0,0) *= m_params.gyr_noise_std * m_params.gyr_noise_std;
+    m_process_noise.block<3,3>(3,3) *= m_params.acc_noise_std * m_params.acc_noise_std;
+    m_process_noise.block<3,3>(6,6) *= m_params.acc_noise_std * m_params.acc_noise_std;
+    m_process_noise.block<3,3>(9,9) *= m_params.gyr_bias_noise_std * m_params.gyr_bias_noise_std;
+    m_process_noise.block<3,3>(12,12) *= m_params.acc_bias_noise_std * m_params.acc_bias_noise_std;
+    m_process_noise.block<3,3>(15,15) *= m_params.gravity_noise_std * m_params.gravity_noise_std;
+    
+    spdlog::debug("[Estimator] Process noise matrix updated with current IMU parameters");
+}
+
 // ============================================================================
 // Initialization
 // ============================================================================
@@ -716,9 +729,7 @@ void Estimator::UpdateWithLidar(const LidarData& lidar) {
 std::vector<std::tuple<Eigen::Vector3f, Eigen::Vector3f, float, size_t>> 
 Estimator::FindCorrespondences(const PointCloudPtr scan) {
     std::vector<std::tuple<Eigen::Vector3f, Eigen::Vector3f, float, size_t>> correspondences;
-    
 
-    m_num_pts_hit_surfels = 0;
     // Check if VoxelMap is available and has points
     if (!m_voxel_map || m_voxel_map->GetPointCount() == 0) {
         spdlog::warn("[Estimator] VoxelMap is empty, no correspondences found");
@@ -778,14 +789,17 @@ Estimator::FindCorrespondences(const PointCloudPtr scan) {
             no_surfel_count++;
             continue;  // No surfel in this L1 voxel
         }
-        
 
-        // === 4. Calculate point-to-plane distance ===
+        // === 3. Calculate point-to-plane distance ===
         Eigen::Vector3f p_world(query_point.x, query_point.y, query_point.z);
         float dist_to_plane = std::abs(surfel_normal.dot(p_world - surfel_centroid));
+
+        // Discard if too far from plane (use voxel size x 2 as threshold)
+        if(dist_to_plane > static_cast<float>(m_params.voxel_size)*2.0f) {
+            continue;
+        }
         
-        
-        // === 5. Add valid correspondence ===
+        // === 4. Add valid correspondence ===
         // Plane equation: n^T * x + d = 0, where d = -n^T * centroid
         float plane_d = -surfel_normal.dot(surfel_centroid);
 
@@ -797,10 +811,10 @@ Estimator::FindCorrespondences(const PointCloudPtr scan) {
         // Store: (p_lidar, plane_normal_world, plane_d, scan_index)
         correspondences.emplace_back(p_lidar, surfel_normal, plane_d, i);
         valid_correspondences++;
-        m_num_pts_hit_surfels++;
     }
     
- 
+    // Update valid correspondence count
+    m_num_valid_correspondences = valid_correspondences;
 
     return correspondences;
 }
@@ -815,7 +829,7 @@ void Estimator::UpdateLocalMap(const PointCloudPtr scan) {
     Eigen::Matrix3f R_wb = m_current_state.m_rotation;
     Eigen::Vector3f t_wb = m_current_state.m_position;
     
-    // ===== Keyframe Check =====
+    // ===== Keyframe Check (Distance/Rotation based) =====
     bool is_keyframe = false;
     
     if (m_first_keyframe) {
@@ -824,63 +838,28 @@ void Estimator::UpdateLocalMap(const PointCloudPtr scan) {
         m_first_keyframe = false;
         m_last_keyframe_position = t_wb;
         m_last_keyframe_rotation = R_wb;
-        m_num_pts_hit_surfels_last = m_num_pts_hit_surfels;
+        
+        spdlog::info("[Estimator] First keyframe inserted");
     } 
     else 
     {
-        // Compute relative transformation T_delta = T_last^-1 * T_current
-        // T_last = [R_last, t_last; 0, 1]
-        // T_current = [R_wb, t_wb; 0, 1]
-        Eigen::Matrix4f T_last = Eigen::Matrix4f::Identity();
-        T_last.block<3, 3>(0, 0) = m_last_keyframe_rotation;
-        T_last.block<3, 1>(0, 3) = m_last_keyframe_position;
+        // Calculate translation distance from last keyframe
+        Eigen::Vector3f translation_diff = t_wb - m_last_keyframe_position;
+        float translation_distance = translation_diff.norm();
         
-        Eigen::Matrix4f T_current = Eigen::Matrix4f::Identity();
-        T_current.block<3, 3>(0, 0) = R_wb;
-        T_current.block<3, 1>(0, 3) = t_wb;
+        // Calculate rotation angle from last keyframe
+        Eigen::Matrix3f R_diff = R_wb * m_last_keyframe_rotation.transpose();
+        Eigen::AngleAxisf angle_axis(R_diff);
+        float rotation_angle_rad = std::abs(angle_axis.angle());
+        float rotation_angle_deg = rotation_angle_rad * 180.0f / M_PI;
         
-        // T_delta = T_last^-1 * T_current
-        Eigen::Matrix4f T_delta = T_last.inverse() * T_current;
+        // Check thresholds
+        bool translation_exceeded = translation_distance > m_params.keyframe_translation_threshold;
+        bool rotation_exceeded = rotation_angle_deg > m_params.keyframe_rotation_threshold;
         
-        // Extract relative translation and rotation from T_delta
-        Eigen::Vector3f t_delta = T_delta.block<3, 1>(0, 3);
-        Eigen::Matrix3f R_delta = T_delta.block<3, 3>(0, 0);
-        
-        // Check translation threshold (from config)
-        float translation = t_delta.norm();
-        
-        // Check rotation threshold (from config)
-        Eigen::AngleAxisf angle_axis(R_delta);
-        float rotation_deg = std::abs(angle_axis.angle()) * 180.0f / M_PI;
-
-        if (translation >= static_cast<float>(m_params.keyframe_translation_threshold) || 
-            rotation_deg >= static_cast<float>(m_params.keyframe_rotation_threshold)) {
-
+        if (translation_exceeded || rotation_exceeded) {
             is_keyframe = true;
-            m_last_keyframe_position = t_wb;
-            m_last_keyframe_rotation = R_wb;
         }
-
-        // unsigned int num_surfels = m_voxel_map->GetL1Surfels().size();
-
-
-
-        //     spdlog::info("[Estimator] Keyframe due to drop in surfel hits: last {}, current {}", m_num_pts_hit_surfels_last, m_num_pts_hit_surfels);
-
-        //     is_keyframe = true;
-
-        // // if(m_num_pts_hit_surfels < m_num_pts_hit_surfels_last* 0.95)
-        // // {
-        // //     m_num_pts_hit_surfels_last = m_num_pts_hit_surfels;
-        // //     is_keyframe = true;
-        // // }
-
-        // // if(m_num_pts_hit_surfels_last == 0)
-        // // {
-        // //     m_num_pts_hit_surfels_last = m_num_pts_hit_surfels;
-        // // }
-
-   
     }
     
     // ===== Add new scan to map (only for keyframes) =====
@@ -927,6 +906,12 @@ void Estimator::UpdateLocalMap(const PointCloudPtr scan) {
     m_voxel_map->UpdateVoxelMap(transformed_scan, sensor_position, m_params.max_map_distance, is_keyframe);
     auto end_voxelmap_update = std::chrono::high_resolution_clock::now();
     double voxelmap_update_time = std::chrono::duration<double, std::milli>(end_voxelmap_update - start_voxelmap_update).count();
+    
+    // Update last keyframe pose if this is a keyframe
+    if (is_keyframe) {
+        m_last_keyframe_position = t_wb;
+        m_last_keyframe_rotation = R_wb;
+    }
     
     // Note: m_map_cloud is not updated here since VoxelMap holds the actual map
     // If needed for visualization, it can be reconstructed from VoxelMap
@@ -1120,25 +1105,17 @@ void Estimator::PrintProcessingTimeStatistics() const {
     }
     
     double sum = 0.0;
-    double min_time = m_processing_times[0];
-    double max_time = m_processing_times[0];
     
     for (double t : m_processing_times) {
         sum += t;
-        min_time = std::min(min_time, t);
-        max_time = std::max(max_time, t);
     }
     
-    double avg_time = sum / m_processing_times.size();
+    double avg_time_ms = sum / m_processing_times.size();
+    double avg_fps = 1000.0 / avg_time_ms;  // Convert ms to FPS
     
     spdlog::info("");
-    spdlog::info("════════════════════════════════════════════════════════");
     spdlog::info("Processing Time Statistics (Total {} frames)", m_processing_times.size());
-    spdlog::info("════════════════════════════════════════════════════════");
-    spdlog::info("   Average: {:.2f} ms", avg_time);
-    spdlog::info("   Min:     {:.2f} ms", min_time);
-    spdlog::info("   Max:     {:.2f} ms", max_time);
-    spdlog::info("════════════════════════════════════════════════════════");
+    spdlog::info("   Average: {:.2f} ms  ({:.1f} FPS)", avg_time_ms, avg_fps);
     spdlog::info("");
 }
 

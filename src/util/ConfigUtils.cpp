@@ -41,8 +41,8 @@ void SetDefaultConfig(LIOConfig& config) {
     config.estimator.frustum_fov_horizontal = 90.0;
     config.estimator.frustum_fov_vertical = 90.0;
     config.estimator.frustum_max_range = 50.0;
-    config.estimator.keyframe_translation_threshold = 1.0;
-    config.estimator.keyframe_rotation_threshold = 10.0;
+    config.estimator.keyframe_translation_threshold = 0.5;  // Default: 0.5 meters
+    config.estimator.keyframe_rotation_threshold = 10.0;    // Default: 10 degrees
     
     // Viewer parameters
     config.viewer.window_width = 1920;

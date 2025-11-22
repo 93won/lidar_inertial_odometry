@@ -79,6 +79,9 @@ public:
     Estimator();
     ~Estimator();
     
+    /// Update process noise matrix after parameter changes
+    void UpdateProcessNoise();
+    
     /// Initialize estimator with first IMU measurement
     void Initialize(const IMUData& first_imu);
     
@@ -130,6 +133,11 @@ public:
     /// Print processing time statistics
     void PrintProcessingTimeStatistics() const;
     
+    /// Get processing times for each frame (in milliseconds)
+    const std::vector<double>& GetProcessingTimes() const {
+        return m_processing_times;
+    }
+    
     // Configuration parameters
     struct Parameters {
         // IMU parameters
@@ -166,9 +174,9 @@ public:
         double frustum_fov_vertical = 90.0;   // degrees
         double frustum_max_range = 50.0;      // meters
         
-        // Keyframe parameters
-        double keyframe_translation_threshold = 1.0;  // meters
-        double keyframe_rotation_threshold = 10.0;    // degrees
+        // Keyframe parameters (distance/rotation based)
+        double keyframe_translation_threshold = 0.5;  // meters - triggers keyframe when moved > threshold
+        double keyframe_rotation_threshold = 10.0;    // degrees - triggers keyframe when rotated > threshold
         
         // Extrinsics (LiDAR to IMU)
         Eigen::Matrix3f R_il = Eigen::Matrix3f::Identity();
@@ -235,8 +243,7 @@ private:
     double m_last_update_time;
     int m_frame_count;
 
-    unsigned int m_num_pts_hit_surfels = 0;
-    unsigned int m_num_pts_hit_surfels_last = 0;
+    unsigned int m_num_valid_correspondences = 0;  // Number of valid correspondences in current scan
     
     // Data buffers (thread-safe)
     mutable std::mutex m_state_mutex;
@@ -277,7 +284,6 @@ private:
     // Keyframe management
     Eigen::Vector3f m_last_keyframe_position;
     Eigen::Matrix3f m_last_keyframe_rotation;
-
     bool m_first_keyframe;
     
     // Probabilistic Kernel Optimization

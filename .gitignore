@@ -43,6 +43,8 @@ thirdparty/*/*.so
 # Papers and benchmark data (large files, not for version control)
 papers/
 benchmark/
+benchmark/*
+!benchmark/.gitkeep
 scripts/
 
 # OS files
