@@ -84,17 +84,6 @@ M3DGR/
 └── Outdoor04/
 ```
 
-#### Other Datasets
-
-**R3LIVE Dataset** (Alternative):
-- **Download**: [Google Drive Link](https://drive.google.com/file/d/1NPtqg34vdAM-BMdqQ_pfRgVvzVVRuXd6/view?usp=sharing)
-- **Source**: [R3LIVE Dataset](https://github.com/hku-mars/r3live)
-- **Sensor**: Livox Avia LiDAR + Built-in IMU
-
-```bash
-cd build
-./lio_player ../config/avia.yaml /home/user/data/R3LIVE/hku_main_building
-```
 
 ## Project Structure
 
