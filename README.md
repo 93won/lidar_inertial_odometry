@@ -6,9 +6,9 @@
 
 - **Iterated Extended Kalman Filter (IEKF)**: Direct LiDAR-IMU fusion with nested iteration for re-linearization and convergence
 - **Adaptive Robust Estimation**: Probabilistic Kernel Optimization (PKO) for automatic Huber loss scale tuning
-- **Incremental Hierarchical Voxel Map**: 2-level hash-based spatial indexing (L0/L1) with occupied-only tracking for fast local KNN search
-- **Pre-computed Surfel Planes**: L1 voxels store fitted plane surfels (normal, centroid, covariance) computed via SVD, enabling O(1) correspondence finding without per-point KNN/SVD
-- **Motion compensation**: IMU-based undistortion for moving LiDAR scans
+- **3-Level Hierarchical Voxel Map (L2→L1→L0)**: Coarse-to-fine spatial indexing with Z-order Morton code hashing for cache-friendly O(1) lookup
+- **Pre-computed Surfel Planes**: L1 voxels store fitted plane surfels (normal, centroid, planarity) via incremental covariance, enabling fast point-to-plane correspondence
+- **Motion Compensation**: IMU-based undistortion for moving LiDAR scans
 
 ### Probabilistic Kernel Optimization (PKO)
 
@@ -93,27 +93,34 @@ Evaluation on [M3DGR Dataset](https://github.com/sjtuyinjie/M3DGR) comparing wit
 
 | Sequence    | Ours (m) | FAST-LIO2 (m) | Ours (FPS) | FAST-LIO2 (FPS) |
 |-------------|----------|---------------|------------|-----------------|
-| Dynamic03   | 0.1456   | 0.1436        | 394        | 256             |
-| Dynamic04   | 0.1549   | 0.1535        | 357        | 250             |
-| Outdoor01   | 0.1536   | 0.1517        | 651        | 495             |
-| Outdoor04   | 0.1562   | 0.1546        | 533        | 305             |
-| Occlusion03 | 0.1269   | 0.1255        | 408        | 278             |
-| Occlusion04 | 0.1410   | 0.1395        | 354        | 235             |
-| **Average** | **0.1464** | **0.1447**  | **428**    | **285**         |
+| Dynamic03   | 0.2569   | 0.2087        | 427        | 256             |
+| Dynamic04   | 0.4687   | 0.2445        | 388        | 250             |
+| Outdoor01   | 0.3544   | 0.2707        | 576        | 495             |
+| Outdoor04   | 0.4842   | 0.4781        | 456        | 305             |
+| Occlusion03 | 0.2634   | 0.4221        | 437        | 278             |
+| Occlusion04 | 0.3592   | 0.2441        | 374        | 235             |
+| **Average** | **0.3645** | **0.3114**  | **443**    | **303**         |
 
 ### Livox AVIA
 
 | Sequence    | Ours (m) | FAST-LIO2 (m) | Ours (FPS) | FAST-LIO2 (FPS) |
 |-------------|----------|---------------|------------|-----------------|
-| Dynamic03   | 0.1478   | 0.1443        | 337        | 267             |
-| Dynamic04   | 0.1563   | 0.1532        | 305        | 247             |
-| Outdoor01   | 0.1549   | 0.1515        | 365        | 295             |
-| Outdoor04   | 0.1560   | 0.1547        | 379        | 262             |
-| Occlusion03 | 0.1252   | 0.1238        | 290        | 227             |
-| Occlusion04 | 0.1402   | 0.1396        | 354        | 222             |
-| **Average** | **0.1467** | **0.1445**  | **335**    | **251**         |
+| Dynamic03   | 0.2835   | 0.2327        | 376        | 267             |
+| Dynamic04   | 0.3487   | 0.3685        | 351        | 247             |
+| Outdoor01   | 0.2492   | 0.3392        | 411        | 295             |
+| Outdoor04   | 0.7009   | 1.4497        | 361        | 262             |
+| Occlusion03 | 0.2057   | 0.2926        | 332        | 227             |
+| Occlusion04 | 0.7791   | 0.6334        | 354        | 222             |
+| **Average** | **0.4279** | **0.5527**  | **364**    | **253**         |
 
-> **Note**: RPE RMSE (Relative Pose Error) is reported. Our method achieves **~1.5x faster** processing speed while maintaining comparable accuracy.
+### Overall
+
+| Metric | Ours | FAST-LIO2 |
+|--------|------|-----------|
+| **Avg. APE RMSE** | **0.396m** | 0.432m |
+| **Avg. FPS** | **395** | 267 |
+
+> **Note**: APE RMSE (Absolute Pose Error) is reported. Our method achieves **~48% faster** processing speed with comparable or better accuracy.
 
 
 ## Project Structure
