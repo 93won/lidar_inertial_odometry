@@ -249,6 +249,12 @@ public:
     int GetVoxelHitCount(const VoxelKey& key) const;
     
     /**
+     * @brief Get all occupied voxels with their centers and hit counts (thread-safe)
+     * @return Vector of tuples: (center, hit_count)
+     */
+    std::vector<std::pair<Eigen::Vector3f, int>> GetOccupiedVoxelsWithHitCount() const;
+    
+    /**
      * @brief Mark a voxel as hit by current scan
      * @param key Voxel key to mark
      */

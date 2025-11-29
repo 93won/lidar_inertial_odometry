@@ -115,7 +115,8 @@ void VoxelGrid::Filter(PointCloud& output) {
     // Step 3: Process each L0 voxel
     for (auto& voxel : l0_voxel_map) {
         VoxelPoints& voxel_points = voxel.second;
-        
+
+                
      
         // Extract and add centroid to output
         output.push_back(voxel_points.GetCentroid());

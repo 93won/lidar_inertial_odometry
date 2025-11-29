@@ -39,7 +39,7 @@ estimator:
   min_distance: 1.0             # Minimum distance for lidar filtering (meters)
   max_distance: 100.0           # Maximum distance for lidar filtering (meters)
   max_voxel_hit_count: 1000     # Maximum hit count for voxel occupancy (1-N, default: 10)
-  init_hit_count: 1000            # Initial hit count when adding new points to voxel
+  init_hit_count: 100            # Initial hit count when adding new points to voxel
   voxel_hierarchy_factor: 3      # L1 voxel factor: L1 = factor × L0 (e.g., 3 = 3×3×3, 5 = 5×5×5, 7 = 7×7×7)
 
   # Keyframe parameters (distance/rotation based)
@@ -54,29 +54,10 @@ estimator:
 viewer:
   window_width: 1920
   window_height: 1080
-  show_point_cloud: true
-  show_trajectory: true
-  show_coordinate_frame: true
-  show_imu_plots: false        # IMU plots disabled
-  show_map: true               # Show map points by default
-  show_voxel_cubes: false      # Voxel cubes visualization off by default
-  follow_frame: true           # Camera follows robot (smooth mode)
-  auto_playback: true          # Auto playback enabled
-  point_size: 2.0
-  trajectory_width: 3.0
-  coordinate_frame_size: 2.0
 
 # Playback parameters
 playback:
-  playback_speed: 1000.0          # Playback speed multiplier
-
-
-# imu:
-#   gyro_noise_density: 0.01     # Gyroscope noise density [rad/s/sqrt(Hz)]
-#   acc_noise_density: 0.1      # Accelerometer noise density [m/s^2/sqrt(Hz)]
-#   gyro_bias_random_walk: 0.0001  # Gyroscope bias random walk [rad/s^2/sqrt(Hz)]
-#   acc_bias_random_walk: 0.001   # Accelerometer bias random walk [m/s^3/sqrt(Hz)]
-#   gravity: [0.0, 0.0, -9.81]      # Gravity vector [m/s^2]
+  playback_speed: 10.0          # Playback speed multiplier
 
 
 imu:

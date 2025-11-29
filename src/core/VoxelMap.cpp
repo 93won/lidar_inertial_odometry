@@ -244,7 +244,7 @@ void VoxelMap::UpdateVoxelMap(const PointCloudPtr& new_cloud,
         if (hit_voxels_L0_set.find(key) != hit_voxels_L0_set.end()) {
             // Voxel is within culling distance of new scan -> increment hit count (up to max)
             if (voxel_data.hit_count < m_max_hit_count) {
-                voxel_data.hit_count++;
+                voxel_data.hit_count = m_max_hit_count;
             }
         } else {
             // Voxel is not hit -> decrement hit count by 1
@@ -446,12 +446,28 @@ Point3D VoxelMap::GetCentroidPoint(const VoxelKey& key) const {
 }
 
 int VoxelMap::GetVoxelHitCount(const VoxelKey& key) const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     auto it = m_voxels_L0.find(key);
     if (it == m_voxels_L0.end()) {
         return 0;  // Voxel not found
     }
     
     return it->second.hit_count;
+}
+
+std::vector<std::pair<Eigen::Vector3f, int>> VoxelMap::GetOccupiedVoxelsWithHitCount() const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    std::vector<std::pair<Eigen::Vector3f, int>> result;
+    result.reserve(m_voxels_L0.size());
+    
+    for (const auto& pair : m_voxels_L0) {
+        if (pair.second.point_count > 0) {
+            Eigen::Vector3f center = VoxelKeyToCenter(pair.first);
+            result.emplace_back(center, pair.second.hit_count);
+        }
+    }
+    
+    return result;
 }
 
 void VoxelMap::MarkVoxelAsHit(const VoxelKey& key) {

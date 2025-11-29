@@ -30,7 +30,7 @@ LIOViewer::LIOViewer()
     , m_show_map_points("ui.5. Show Map Points", true, true)  // Show surfel centroids as green points (default ON)
     , m_show_voxel_cubes("ui.6. Show L0 Voxels", false, true)  // Show L0 voxel cubes (heavy)
     , m_show_surfels("ui.7. Show Surfels", false, true)  // Show surfel discs with normals
-    , m_auto_playback("ui.8. Auto Playback", true, true)  // Enable auto playback by default
+    , m_auto_playback("ui.8. Auto Playback", false, true)  // Enable auto playback by default
     , m_step_forward_button("ui.9. Step Forward", false, false)
     , m_follow_mode("ui.10. Follow Mode (Top-Down)", true, true)  // Enable follow mode with mouse zoom support
     , m_frame_id("info.Frame ID", 0)
@@ -348,16 +348,17 @@ void LIOViewer::RenderLoop() {
             DrawSurfels(voxel_map_copy);  // Draw L1 surfels with normals
         }
 
+        // Draw current scan point cloud
+        if (m_show_point_cloud.Get() && current_cloud_copy && !current_cloud_copy->empty()) {
+            DrawPointCloud();
+        }
+
+        // Draw trajectory and current pose LAST so they appear on top
         if (m_show_trajectory.Get() && trajectory_copy.size() > 1) {
             DrawTrajectory();
         }
 
         DrawCurrentPose();
-
-        // Draw current scan point cloud LAST so it appears on top
-        if (m_show_point_cloud.Get() && current_cloud_copy && !current_cloud_copy->empty()) {
-            DrawPointCloud();
-        }
 
         // Swap buffers
         pangolin::FinishFrame();
@@ -461,6 +462,9 @@ void LIOViewer::DrawTrajectory() {
         return;
     }
     
+    // Disable depth test so trajectory is always visible on top
+    glDisable(GL_DEPTH_TEST);
+    
     glLineWidth(m_trajectory_width);
     glColor3f(1.0f, 1.0f, 0.0f); // Yellow trajectory
     
@@ -479,6 +483,9 @@ void LIOViewer::DrawTrajectory() {
     glEnd();
     
     glLineWidth(1.0f);
+    
+    // Re-enable depth test
+    glEnable(GL_DEPTH_TEST);
 }
 
 void LIOViewer::DrawVoxelCubes(std::shared_ptr<VoxelMap> voxel_map) {
@@ -486,25 +493,18 @@ void LIOViewer::DrawVoxelCubes(std::shared_ptr<VoxelMap> voxel_map) {
         return;
     }
     
-    // Get all occupied voxels
-    std::vector<VoxelKey> occupied_voxels = voxel_map->GetOccupiedVoxels();
+    // Get all occupied voxels with hit counts in one thread-safe call
+    auto voxels_with_hitcount = voxel_map->GetOccupiedVoxelsWithHitCount();
+    if (voxels_with_hitcount.empty()) {
+        return;
+    }
+    
     float voxel_size = voxel_map->GetVoxelSize();
     
-    // First pass: find z min/max
-    float z_min = std::numeric_limits<float>::max();
-    float z_max = std::numeric_limits<float>::lowest();
-    
-    for (const auto& voxel_key : occupied_voxels) {
-        Eigen::Vector3f center = voxel_map->VoxelKeyToCenter(voxel_key);
-        z_min = std::min(z_min, center.z());
-        z_max = std::max(z_max, center.z());
-    }
-    
-    // Prevent division by zero
-    float z_range = z_max - z_min;
-    if (z_range < 0.01f) {
-        z_range = 0.01f;
-    }
+    // Fixed z range for colormap: -1.0 to 10.0
+    const float z_min = -1.0f;
+    const float z_max = 3.0f;
+    const float z_range = z_max - z_min;  // 11.0
     
     // Enable blending for transparency
     glEnable(GL_BLEND);
@@ -514,46 +514,35 @@ void LIOViewer::DrawVoxelCubes(std::shared_ptr<VoxelMap> voxel_map) {
     glLineWidth(1.0f);
     
     // Get max hit count from VoxelMap config
-    const float max_hit_count = static_cast<float>(voxel_map->GetMaxHitCount());
+    const int max_hit_count = voxel_map->GetMaxHitCount();
+    const int hit_threshold = std::max(0, max_hit_count - 100);
     
-    for (const auto& voxel_key : occupied_voxels) {
-        Eigen::Vector3f center = voxel_map->VoxelKeyToCenter(voxel_key);
-        
-        // Get hit count for this voxel
-        int hit_count = voxel_map->GetVoxelHitCount(voxel_key);
-        
-        // Calculate alpha: linear mapping from hit_count [1, max] to alpha [0.1, 1.0]
-        float alpha = std::min(1.0f, std::max(0.1f, hit_count / max_hit_count));
-        
-        // Calculate color based on z height (jet colormap)
-        float normalized_z = (center.z() - z_min) / z_range;  // 0 to 1
-        float r, g, b;
-        
-        // Jet colormap: blue -> cyan -> green -> yellow -> red
-        if (normalized_z < 0.25f) {
-            r = 0.0f;
-            g = 4.0f * normalized_z;
-            b = 1.0f;
-        } else if (normalized_z < 0.5f) {
-            r = 0.0f;
-            g = 1.0f;
-            b = 1.0f - 4.0f * (normalized_z - 0.25f);
-        } else if (normalized_z < 0.75f) {
-            r = 4.0f * (normalized_z - 0.5f);
-            g = 1.0f;
-            b = 0.0f;
-        } else {
-            r = 1.0f;
-            g = 1.0f - 4.0f * (normalized_z - 0.75f);
-            b = 0.0f;
+    for (const auto& [center, hit_count] : voxels_with_hitcount) {
+        // Only draw voxels with hit_count >= max_hit - 100
+        if (hit_count < hit_threshold) {
+            continue;
         }
         
+        // Calculate alpha: linear mapping from [max-100, max] to [0.1, 0.3]
+        float t = static_cast<float>(hit_count - hit_threshold) / 100.0f;
+        t = std::min(1.0f, std::max(0.0f, t));
+        float alpha = 0.1f + t * 0.2f;  // 0.0 to 0.2
+        
+        // Calculate color based on z height: red (z=-1) to blue (z=10)
+        float normalized_z = (center.z() - z_min) / z_range;  // 0 to 1
+        normalized_z = std::min(1.0f, std::max(0.0f, normalized_z));  // clamp
+        
+        // Red to Blue colormap (red at low z, blue at high z)
+        float r = 0.0f;//1.0f - normalized_z;  // 1.0 at z=-1, 0.0 at z=10
+        float g = 1.0f - normalized_z;
+        float b = normalized_z;         // 0.0 at z=-1, 1.0 at z=10
+        
         // Draw filled cube with z-based color and hit-count based alpha
-        glColor4f(r, g, b, alpha * 0.3f);  // Filled cube with transparency
+        glColor4f(r, g, b, alpha);
         DrawCubeFilled(center, voxel_size);
         
         // Draw edges with slightly higher alpha
-        glColor4f(r, g, b, alpha * 0.6f);  // Edges more visible
+        glColor4f(r, g, b, alpha * 2.0f);
         DrawCube(center, voxel_size);
     }
     
@@ -740,7 +729,7 @@ void LIOViewer::DrawSurfels(std::shared_ptr<VoxelMap> voxel_map) {
         v_axis = normal.cross(u_axis).normalized();
         
         // Draw filled disc (surfel surface)
-        glColor4f(0.2f, green_intensity * 0.8f, 0.9f, 0.6f);  // Semi-transparent cyan-green
+        glColor4f(0.2f, green_intensity * 0.8f, 0.9f, 0.1f);  // Alpha 0.1
         glBegin(GL_TRIANGLE_FAN);
         glVertex3f(centroid.x(), centroid.y(), centroid.z());  // Center vertex
         
@@ -757,7 +746,7 @@ void LIOViewer::DrawSurfels(std::shared_ptr<VoxelMap> voxel_map) {
         
         // Draw circle outline (border)
         glLineWidth(2.0f);
-        glColor4f(0.0f, green_intensity, 1.0f, 0.9f);  // Brighter outline
+        glColor4f(0.0f, green_intensity, 1.0f, 0.3f);  // Outline alpha 0.3
         glBegin(GL_LINE_LOOP);
         for (int i = 0; i < num_segments; ++i) {
             float angle = 2.0f * M_PI * i / num_segments;
@@ -768,29 +757,6 @@ void LIOViewer::DrawSurfels(std::shared_ptr<VoxelMap> voxel_map) {
             glVertex3f(circle_point.x(), circle_point.y(), circle_point.z());
         }
         glEnd();
-        
-        // Draw normal vector as short arrow from center
-        float normal_length = disc_radius * 0.5f;
-        glLineWidth(2.5f);
-        glColor4f(1.0f, 1.0f, 0.0f, 0.95f);  // Yellow for normal
-        
-        Eigen::Vector3f normal_end = centroid + normal * normal_length;
-        
-        glBegin(GL_LINES);
-        glVertex3f(centroid.x(), centroid.y(), centroid.z());
-        glVertex3f(normal_end.x(), normal_end.y(), normal_end.z());
-        glEnd();
-        
-        // Small arrow head
-        float head_size = normal_length * 0.2f;
-        glBegin(GL_LINES);
-        Eigen::Vector3f tip1 = normal_end + u_axis * head_size - normal * head_size;
-        Eigen::Vector3f tip2 = normal_end - u_axis * head_size - normal * head_size;
-        glVertex3f(tip1.x(), tip1.y(), tip1.z());
-        glVertex3f(normal_end.x(), normal_end.y(), normal_end.z());
-        glVertex3f(tip2.x(), tip2.y(), tip2.z());
-        glVertex3f(normal_end.x(), normal_end.y(), normal_end.z());
-        glEnd();
     }
     
     glDisable(GL_BLEND);
@@ -799,6 +765,9 @@ void LIOViewer::DrawSurfels(std::shared_ptr<VoxelMap> voxel_map) {
 
 void LIOViewer::DrawCurrentPose() {
     std::lock_guard<std::mutex> lock(m_data_mutex);
+    
+    // Disable depth test so pose is always visible on top
+    glDisable(GL_DEPTH_TEST);
     
     Eigen::Vector3f position = m_current_pose.block<3, 1>(0, 3);
     Eigen::Matrix3f rotation = m_current_pose.block<3, 3>(0, 0);
@@ -838,6 +807,9 @@ void LIOViewer::DrawCurrentPose() {
     glEnd();
     
     glLineWidth(1.0f);
+    
+    // Re-enable depth test
+    glEnable(GL_DEPTH_TEST);
 }
 
 } // namespace lio
