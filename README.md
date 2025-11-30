@@ -88,31 +88,8 @@ M3DGR/
 
 Evaluation on [M3DGR Dataset](https://github.com/sjtuyinjie/M3DGR) comparing with FAST-LIO2.
 
-### Livox Mid-360
 
-| Sequence    | Ours (m) | FAST-LIO2 (m) | Ours (FPS) | FAST-LIO2 (FPS) |
-|-------------|----------|---------------|------------|-----------------|
-| Dynamic03   | 0.2569   | 0.2087        | 427        | 256             |
-| Dynamic04   | 0.4687   | 0.2445        | 388        | 250             |
-| Outdoor01   | 0.3544   | 0.2707        | 576        | 495             |
-| Outdoor04   | 0.4842   | 0.4781        | 456        | 305             |
-| Occlusion03 | 0.2634   | 0.4221        | 437        | 278             |
-| Occlusion04 | 0.3592   | 0.2441        | 374        | 235             |
-| **Average** | **0.3645** | **0.3114**  | **443**    | **303**         |
-
-### Livox AVIA
-
-| Sequence    | Ours (m) | FAST-LIO2 (m) | Ours (FPS) | FAST-LIO2 (FPS) |
-|-------------|----------|---------------|------------|-----------------|
-| Dynamic03   | 0.2835   | 0.2327        | 376        | 267             |
-| Dynamic04   | 0.3487   | 0.3685        | 351        | 247             |
-| Outdoor01   | 0.2492   | 0.3392        | 411        | 295             |
-| Outdoor04   | 0.7009   | 1.4497        | 361        | 262             |
-| Occlusion03 | 0.2057   | 0.2926        | 332        | 227             |
-| Occlusion04 | 0.7791   | 0.6334        | 354        | 222             |
-| **Average** | **0.4279** | **0.5527**  | **364**    | **253**         |
-
-### Overall
+### Overall (Avia, Mid-360)
 
 | Metric | Ours | FAST-LIO2 |
 |--------|------|-----------|
