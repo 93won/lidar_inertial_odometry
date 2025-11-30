@@ -31,7 +31,7 @@ estimator:
   init_imu_samples: 300       # Number of IMU samples for initialization
   voxel_size: 0.5       # Voxel size in meters for VoxelMap
   max_iterations: 4         # Maximum Gauss-Newton iterations
-  convergence_threshold: 0.005 # Convergence threshold for optimization
+  convergence_threshold: 0.001 # Convergence threshold for optimization
 
   map_planarity_threshold: 0.1  # Planarity threshold for VoxelMap surfel creation
 

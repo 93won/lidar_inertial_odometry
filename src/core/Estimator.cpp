@@ -1208,25 +1208,37 @@ PointCloudPtr Estimator::UndistortPointCloud(
     
     // Get pose at scan end time (reference frame)
     State state_end = InterpolateState(scan_end_time);
-    Eigen::Matrix3f R_end = state_end.m_rotation;
-    Eigen::Vector3f t_end = state_end.m_position;
+    Eigen::Matrix3f R_end = state_end.m_rotation;  // R_world_imu at end
+    Eigen::Vector3f t_end = state_end.m_position;  // t_world_imu at end
+    
+    // Extrinsics: LiDAR -> IMU
+    Eigen::Matrix3f R_il = m_params.R_il;  // R_imu_lidar
+    Eigen::Vector3f t_il = m_params.t_il;  // t_imu_lidar
     
     // Transform each point to scan end frame
     for (const auto& point : *cloud) {
         // Compute timestamp of this point
         double point_timestamp = scan_start_time + point.offset_time;
         
-        // Get interpolated state at this point's capture time
+        // Get interpolated IMU state at this point's capture time
         State state_point = InterpolateState(point_timestamp);
-        Eigen::Matrix3f R_point = state_point.m_rotation;
-        Eigen::Vector3f t_point = state_point.m_position;
+        Eigen::Matrix3f R_i = state_point.m_rotation;  // R_world_imu at t_i
+        Eigen::Vector3f t_i = state_point.m_position;  // t_world_imu at t_i
         
-        // Transform point: from lidar frame at t_point to world frame
+        // Point in LiDAR frame
         Eigen::Vector3f p_lidar(point.x, point.y, point.z);
-        Eigen::Vector3f p_world = R_point * p_lidar + t_point;
         
-        // Transform from world frame to lidar frame at t_end
-        Eigen::Vector3f p_undistorted = R_end.transpose() * (p_world - t_end);
+        // 1. LiDAR -> IMU frame at t_i
+        Eigen::Vector3f p_imu_i = R_il * p_lidar + t_il;
+        
+        // 2. IMU at t_i -> World
+        Eigen::Vector3f p_world = R_i * p_imu_i + t_i;
+        
+        // 3. World -> IMU at t_end
+        Eigen::Vector3f p_imu_end = R_end.transpose() * (p_world - t_end);
+        
+        // 4. IMU at t_end -> LiDAR at t_end
+        Eigen::Vector3f p_undistorted = R_il.transpose() * (p_imu_end - t_il);
         
         // Create undistorted point (offset_time = 0 since all points are now at scan_end_time)
         Point3D undistorted_point(
