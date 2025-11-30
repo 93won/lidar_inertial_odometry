@@ -432,55 +432,42 @@ void Estimator::ProcessLidar(const LidarData& lidar) {
     std::lock_guard<std::mutex> lock_state(m_state_mutex);
     std::lock_guard<std::mutex> lock_map(m_map_mutex);
     
-    // === 1. Undistortion (BEFORE clearing state history!) ===
-    auto start_undistort = std::chrono::high_resolution_clock::now();
-    PointCloudPtr undistorted_cloud = lidar.cloud;
+    // === 1. Downsampling FIRST (reduces point count before undistortion) ===
+    auto downsampled_scan = std::make_shared<PointCloud>();
+    VoxelGrid scan_filter;
+    scan_filter.SetInputCloud(lidar.cloud);
+    scan_filter.SetLeafSize(static_cast<float>(m_params.voxel_size));
+    scan_filter.SetPlanarityFilter(false);
+    // scan_filter.SetPlanarityThreshold(m_params.map_planarity_threshold);
+    scan_filter.SetHierarchyFactor(m_params.voxel_hierarchy_factor);
+    scan_filter.Filter(*downsampled_scan);
+
+    // === 2. Undistortion (now on downsampled cloud - much faster!) ===
+    PointCloudPtr undistorted_cloud = downsampled_scan;
     if (m_params.enable_undistortion) {
-        // Use actual scan duration from last LiDAR frame
         double scan_start_time = m_first_lidar_frame ? lidar.timestamp - 0.1 : m_last_lidar_time;
         undistorted_cloud = UndistortPointCloud(
-            lidar.cloud, 
+            downsampled_scan,  // Use downsampled cloud (offset_time is averaged per voxel)
             scan_start_time,
             lidar.timestamp
         );
     }
-    auto end_undistort = std::chrono::high_resolution_clock::now();
-    double time_undistort = std::chrono::duration<double, std::milli>(end_undistort - start_undistort).count();
     
     // Clear state history AFTER undistortion
-    // From now on, only states between current and next LiDAR will be saved
     m_state_history.clear();
-    
-    // === 2. Downsampling ===
-    auto start_downsample = std::chrono::high_resolution_clock::now();
-    auto downsampled_scan = std::make_shared<PointCloud>();
-    VoxelGrid scan_filter;
-    scan_filter.SetInputCloud(undistorted_cloud);
-    scan_filter.SetLeafSize(static_cast<float>(m_params.voxel_size));  // Use config voxel size for input scan
-    scan_filter.SetPlanarityFilter(false);  // Enable L1-based planarity filtering
-    // scan_filter.SetPlanarityThreshold(static_cast<float>(m_params.scan_planarity_threshold));  // Point-to-plane distance threshold
-    scan_filter.SetHierarchyFactor(m_params.voxel_hierarchy_factor);  // L1 = factor × L0
-    scan_filter.Filter(*downsampled_scan);
-    auto end_downsample = std::chrono::high_resolution_clock::now();
-    double time_downsample = std::chrono::duration<double, std::milli>(end_downsample - start_downsample).count();
 
     // === 3. Range filtering ===
-    auto start_range_filter = std::chrono::high_resolution_clock::now();
     PointCloudPtr range_filtered_scan = std::make_shared<PointCloud>();
-    unsigned int initial_size = downsampled_scan->size();
-    unsigned int final_size = 0;
+    unsigned int initial_size = undistorted_cloud->size();
     const float min_range = static_cast<float>(m_params.min_range);
     const float max_range = static_cast<float>(m_params.max_map_distance);
     for(unsigned int i = 0; i < initial_size; ++i) {
-        const auto& point = downsampled_scan->at(i);
+        const auto& point = undistorted_cloud->at(i);
         float range = std::sqrt(point.x * point.x + point.y * point.y + point.z * point.z);
         if (range >= min_range && range <= max_range) {
             range_filtered_scan->push_back(point);
-            final_size++;
         }
     }
-    auto end_range_filter = std::chrono::high_resolution_clock::now();
-    double time_range_filter = std::chrono::duration<double, std::milli>(end_range_filter - start_range_filter).count();
     
     // Create LidarData with downsampled cloud for all processing
     LidarData downsampled_lidar(lidar.timestamp, range_filtered_scan);
@@ -500,43 +487,12 @@ void Estimator::ProcessLidar(const LidarData& lidar) {
     }
     
     // === 4. IEKF Update ===
-    auto start_iekf = std::chrono::high_resolution_clock::now();
     UpdateWithLidar(downsampled_lidar);
-    auto end_iekf = std::chrono::high_resolution_clock::now();
-    double time_iekf = std::chrono::duration<double, std::milli>(end_iekf - start_iekf).count();
     
     // === 5. Map Update ===
-    auto start_map_update = std::chrono::high_resolution_clock::now();
     UpdateLocalMap(range_filtered_scan);
-    auto end_map_update = std::chrono::high_resolution_clock::now();
-    double time_map_update = std::chrono::duration<double, std::milli>(end_map_update - start_map_update).count();
     
-    // Accumulate timing for 100-frame averages
-    double time_preprocess = time_undistort + time_downsample + time_range_filter;
-    m_sum_preprocess_time += time_preprocess;
-    m_sum_lidar_time += time_iekf;
-    m_sum_map_time += time_map_update;
-    m_timing_frame_count++;
-    
-    if (m_timing_frame_count >= 100) {
-        spdlog::info("[Timing] avg 100 frames - preprocess: {:.2f}ms, lidar: {:.2f}ms, map: {:.2f}ms",
-                     m_sum_preprocess_time / 100.0, m_sum_lidar_time / 100.0, m_sum_map_time / 100.0);
-        spdlog::info("[Timing]   corr: {:.2f}ms (transform: {:.2f}, surfel: {:.2f}, add: {:.2f})",
-                     m_sum_corr_time / 100.0, 
-                     m_sum_corr_transform_time / 100.0, m_sum_corr_surfel_time / 100.0, m_sum_corr_add_time / 100.0);
-        m_sum_preprocess_time = 0.0;
-        m_sum_lidar_time = 0.0;
-        m_sum_map_time = 0.0;
-        m_sum_corr_time = 0.0;
-        m_sum_jacobian_time = 0.0;
-        m_sum_solve_time = 0.0;
-        m_sum_corr_transform_time = 0.0;
-        m_sum_corr_surfel_time = 0.0;
-        m_sum_corr_add_time = 0.0;
-        m_timing_frame_count = 0;
-    }
-    
-    // Update statistics
+    // Update statistics - only track total processing time
     auto end_time = std::chrono::high_resolution_clock::now();
     double processing_time = std::chrono::duration<double, std::milli>(end_time - start_time).count();
     
@@ -560,20 +516,16 @@ void Estimator::ProcessLidar(const LidarData& lidar) {
     m_last_lidar_state = m_current_state;
     m_frame_count++;
     
-    // Track processing time statistics
-    m_processing_times.push_back(processing_time);
+    // Log average processing time every 100 frames
+    if (m_frame_count % 100 == 0) {
+        spdlog::info("[Estimator] Frame {}: avg processing time = {:.2f} ms", 
+                     m_frame_count, m_statistics.avg_processing_time_ms);
+    }
     
 
 }
 
 void Estimator::UpdateWithLidar(const LidarData& lidar) {
-    auto start_total = std::chrono::high_resolution_clock::now();
-    
-    // Timing accumulators for this frame
-    double frame_corr_time = 0.0;
-    double frame_jacobian_time = 0.0;
-    double frame_solve_time = 0.0;
-  
      // Reset PKO for new scan
       
     // Nested Iterated Extended Kalman Filter (IEKF)
@@ -583,7 +535,6 @@ void Estimator::UpdateWithLidar(const LidarData& lidar) {
     const int max_inner_iterations = 4;  // State update iterations per correspondence
     bool converged = false;
     
-    double total_corr_time = 0.0;
     int total_inner_iters = 0;
     double residual_normalization_scale = 1.0;  // For PKO normalization
     
@@ -598,14 +549,8 @@ void Estimator::UpdateWithLidar(const LidarData& lidar) {
             m_pko->Reset();
         }
 
-        // OUTER LOOP: Find correspondences at current state (expensive, ~50ms)
-        auto start_corr = std::chrono::high_resolution_clock::now();
-
+        // OUTER LOOP: Find correspondences at current state
         correspondences = FindCorrespondences(lidar.cloud);
-        auto end_corr = std::chrono::high_resolution_clock::now();
-        double corr_time = std::chrono::duration<double, std::milli>(end_corr - start_corr).count();
-        total_corr_time += corr_time;
-        frame_corr_time += corr_time;
         
         if (correspondences.empty()) {
             break;
@@ -619,14 +564,9 @@ void Estimator::UpdateWithLidar(const LidarData& lidar) {
             total_inner_iters++;
             
             // Compute Jacobian H and residual at current state (with SAME correspondences)
-            auto start_jacobian = std::chrono::high_resolution_clock::now();
             Eigen::MatrixXf H;
             Eigen::VectorXf residual;
             ComputeLidarJacobians(correspondences, H, residual);
-            auto end_jacobian = std::chrono::high_resolution_clock::now();
-            frame_jacobian_time += std::chrono::duration<double, std::milli>(end_jacobian - start_jacobian).count();
-
-            auto start_solve = std::chrono::high_resolution_clock::now();
 
             // Calculate residual normalization scale (only once at first iteration)
             if (inner_iter == 0 && residual.size() > 0) {
@@ -732,9 +672,6 @@ void Estimator::UpdateWithLidar(const LidarData& lidar) {
             // Apply state correction
             ApplyStateCorrection(dx);
             
-            auto end_solve = std::chrono::high_resolution_clock::now();
-            frame_solve_time += std::chrono::duration<double, std::milli>(end_solve - start_solve).count();
-            
             // Check inner convergence
             float rot_norm = dx.segment<3>(0).norm();
             float pos_norm = dx.segment<3>(3).norm();
@@ -764,14 +701,6 @@ void Estimator::UpdateWithLidar(const LidarData& lidar) {
     }
 
     m_last_correspondences = correspondences;
-
-    // Accumulate timing for lidar breakdown
-    m_sum_corr_time += frame_corr_time;
-    m_sum_jacobian_time += frame_jacobian_time;
-    m_sum_solve_time += frame_solve_time;
-
-    auto end_total = std::chrono::high_resolution_clock::now();
-    double total_time = std::chrono::duration<double, std::milli>(end_total - start_total).count();
 }
 
 // ============================================================================
@@ -809,11 +738,6 @@ Estimator::FindCorrespondences(const PointCloudPtr scan) {
     
     Eigen::Matrix4f T_wl = T_wb * T_il;  // Combined transformation
     
-    // Timing accumulators
-    double transform_time = 0.0;
-    double surfel_time = 0.0;
-    double add_time = 0.0;
-    
     // Process points and find correspondences using L1 surfels
     int valid_correspondences = 0;
     int total_attempts = 0;
@@ -825,7 +749,6 @@ Estimator::FindCorrespondences(const PointCloudPtr scan) {
         total_attempts++;
         
         // === 1. Transform point to world frame ===
-        auto t1 = std::chrono::high_resolution_clock::now();
         const auto& pt_scan = scan->at(i);
         Eigen::Vector4f pt_homo(pt_scan.x, pt_scan.y, pt_scan.z, 1.0f);
         Eigen::Vector4f pt_world_homo = T_wl * pt_homo;
@@ -835,8 +758,6 @@ Estimator::FindCorrespondences(const PointCloudPtr scan) {
         query_point.x = pt_world_homo.x();
         query_point.y = pt_world_homo.y();
         query_point.z = pt_world_homo.z();
-        auto t2 = std::chrono::high_resolution_clock::now();
-        transform_time += std::chrono::duration<double, std::milli>(t2 - t1).count();
         
         // === 2. Get surfel from the L1 voxel containing this point ===
         Eigen::Vector3f surfel_normal;
@@ -844,9 +765,7 @@ Estimator::FindCorrespondences(const PointCloudPtr scan) {
         float planarity_score;
         
         bool has_surfel = m_voxel_map->GetSurfelAtPoint(query_point, surfel_normal, surfel_centroid, planarity_score);
-        auto t3 = std::chrono::high_resolution_clock::now();
-        surfel_time += std::chrono::duration<double, std::milli>(t3 - t2).count();
-        
+
         if (!has_surfel) {
             no_surfel_count++;
             continue;  // No surfel in this L1 voxel
@@ -871,15 +790,8 @@ Estimator::FindCorrespondences(const PointCloudPtr scan) {
         
         // Store: (p_lidar, plane_normal_world, plane_d, scan_index)
         correspondences.emplace_back(p_lidar, surfel_normal, plane_d, i);
-        auto t4 = std::chrono::high_resolution_clock::now();
-        add_time += std::chrono::duration<double, std::milli>(t4 - t3).count();
         valid_correspondences++;
     }
-    
-    // Accumulate timing
-    m_sum_corr_transform_time += transform_time;
-    m_sum_corr_surfel_time += surfel_time;
-    m_sum_corr_add_time += add_time;
     
     // Update valid correspondence count
     m_num_valid_correspondences = valid_correspondences;
@@ -1198,49 +1110,81 @@ PointCloudPtr Estimator::UndistortPointCloud(
     double scan_start_time,
     double scan_end_time) 
 {
-    // Motion compensation using IMU-propagated state interpolation
+    // Optimized motion compensation using pre-computed transforms
+    // Key optimizations:
+    // 1. Pre-compute N transforms instead of per-point interpolation
+    // 2. Lookup table for O(1) access
     
     if (!m_params.enable_undistortion || m_state_history.empty()) {
         return cloud;
     }
     
     PointCloudPtr undistorted_cloud(new PointCloud);
+    undistorted_cloud->reserve(cloud->size());
     
-    // Get pose at scan end time (reference frame)
-    State state_end = InterpolateState(scan_end_time);
-    Eigen::Matrix3f R_end = state_end.m_rotation;  // R_world_imu at end
-    Eigen::Vector3f t_end = state_end.m_position;  // t_world_imu at end
+    // === 1. Pre-compute N transforms ===
+    const int N = 100;  // Number of time segments
+    
+    // Store relative rotation and translation for each segment
+    // These transform points from LiDAR at t_k to LiDAR at t_end
+    std::vector<Eigen::Matrix3f> R_rel(N);
+    std::vector<Eigen::Vector3f> t_rel(N);
+    
+    double scan_duration = scan_end_time - scan_start_time;
+    double dt = scan_duration / N;
     
     // Extrinsics: LiDAR -> IMU
-    Eigen::Matrix3f R_il = m_params.R_il;  // R_imu_lidar
-    Eigen::Vector3f t_il = m_params.t_il;  // t_imu_lidar
+    const Eigen::Matrix3f& R_il = m_params.R_il;  // R_imu_lidar
+    const Eigen::Vector3f& t_il = m_params.t_il;  // t_imu_lidar
     
-    // Transform each point to scan end frame
+    // Get end state (reference frame)
+    State state_end = InterpolateState(scan_end_time);
+    const Eigen::Matrix3f& R_end = state_end.m_rotation;  // R_world_imu at end
+    const Eigen::Vector3f& t_end = state_end.m_position;  // t_world_imu at end
+    
+    // Pre-compute for each time segment
+    for (int k = 0; k < N; k++) {
+        double t_k = scan_start_time + k * dt;
+        
+        // Get interpolated state at t_k
+        State state_k = InterpolateState(t_k);
+        const Eigen::Matrix3f& R_i = state_k.m_rotation;  // R_world_imu at t_i
+        const Eigen::Vector3f& t_i = state_k.m_position;  // t_world_imu at t_i
+        
+        // Compute relative transform from LiDAR at t_k to LiDAR at t_end
+        // Following the original transformation chain:
+        // 1. p_imu_i = R_il * p_lidar + t_il
+        // 2. p_world = R_i * p_imu_i + t_i
+        // 3. p_imu_end = R_end^T * (p_world - t_end)
+        // 4. p_undistorted = R_il^T * (p_imu_end - t_il)
+        //
+        // Combining: p_undistorted = R_il^T * (R_end^T * (R_i * (R_il * p + t_il) + t_i - t_end) - t_il)
+        //          = R_il^T * R_end^T * R_i * R_il * p 
+        //            + R_il^T * R_end^T * R_i * t_il 
+        //            + R_il^T * R_end^T * t_i 
+        //            - R_il^T * R_end^T * t_end 
+        //            - R_il^T * t_il
+        //
+        // R_rel = R_il^T * R_end^T * R_i * R_il
+        // t_rel = R_il^T * R_end^T * (R_i * t_il + t_i - t_end) - R_il^T * t_il
+        
+        Eigen::Matrix3f R_end_T = R_end.transpose();
+        
+        R_rel[k] = R_il.transpose() * R_end_T * R_i * R_il;
+        t_rel[k] = R_il.transpose() * R_end_T * (R_i * t_il + t_i - t_end) - R_il.transpose() * t_il;
+    }
+    
+    // === 2. Apply pre-computed transforms to each point ===
     for (const auto& point : *cloud) {
-        // Compute timestamp of this point
-        double point_timestamp = scan_start_time + point.offset_time;
+        // Find nearest pre-computed transform index from offset_time
+        int idx = static_cast<int>(point.offset_time / dt);
+        idx = std::max(0, std::min(idx, N - 1));
         
-        // Get interpolated IMU state at this point's capture time
-        State state_point = InterpolateState(point_timestamp);
-        Eigen::Matrix3f R_i = state_point.m_rotation;  // R_world_imu at t_i
-        Eigen::Vector3f t_i = state_point.m_position;  // t_world_imu at t_i
-        
-        // Point in LiDAR frame
+        // Apply relative transform
         Eigen::Vector3f p_lidar(point.x, point.y, point.z);
+        Eigen::Vector3f p_undistorted = R_rel[idx] * p_lidar + t_rel[idx];
         
-        // 1. LiDAR -> IMU frame at t_i
-        Eigen::Vector3f p_imu_i = R_il * p_lidar + t_il;
-        
-        // 2. IMU at t_i -> World
-        Eigen::Vector3f p_world = R_i * p_imu_i + t_i;
-        
-        // 3. World -> IMU at t_end
-        Eigen::Vector3f p_imu_end = R_end.transpose() * (p_world - t_end);
-        
-        // 4. IMU at t_end -> LiDAR at t_end
-        Eigen::Vector3f p_undistorted = R_il.transpose() * (p_imu_end - t_il);
-        
-        // Create undistorted point (offset_time = 0 since all points are now at scan_end_time)
+        // Create undistorted point
         Point3D undistorted_point(
             p_undistorted.x(), 
             p_undistorted.y(), 

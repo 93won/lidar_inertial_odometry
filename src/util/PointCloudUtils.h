@@ -350,13 +350,17 @@ class VoxelGrid {
 public:
     VoxelGrid() 
         : m_leaf_size(0.4f)
+        , m_inv_leaf_size(1.0f / 0.4f)  // Pre-computed inverse for fast division
         , m_planarity_threshold(0.1f)  // Default: relaxed threshold for downsampling
                                         // Can be overridden via SetPlanarityThreshold()
                                         // Config file: scan_planarity_threshold (0.1f)
         , m_enable_planarity_filter(false)
     {}
     
-    void SetLeafSize(float size) { m_leaf_size = size; }
+    void SetLeafSize(float size) { 
+        m_leaf_size = size; 
+        m_inv_leaf_size = 1.0f / size;  // Update inverse when leaf size changes
+    }
     
     void SetInputCloud(const PointCloud::ConstPtr& cloud) { m_input_cloud = cloud; }
     
@@ -389,6 +393,10 @@ private:
         
         void AddPoint(const Point3D& new_point) {
             points.push_back(new_point);
+        }
+        
+        size_t GetPointCount() const {
+            return points.size();
         }
         
         float CalculatePlanarity() const {
@@ -426,15 +434,25 @@ private:
                 return Point3D(0, 0, 0);
             }
             
-            Point3D centroid(0, 0, 0);
+            float sum_x = 0.0f, sum_y = 0.0f, sum_z = 0.0f;
+            float sum_intensity = 0.0f;
+            float sum_offset_time = 0.0f;
+            
             for (const auto& pt : points) {
-                centroid.x += pt.x;
-                centroid.y += pt.y;
-                centroid.z += pt.z;
+                sum_x += pt.x;
+                sum_y += pt.y;
+                sum_z += pt.z;
+                sum_intensity += pt.intensity;
+                sum_offset_time += pt.offset_time;
             }
-            centroid.x /= static_cast<float>(points.size());
-            centroid.y /= static_cast<float>(points.size());
-            centroid.z /= static_cast<float>(points.size());
+            
+            float n = static_cast<float>(points.size());
+            Point3D centroid;
+            centroid.x = sum_x / n;
+            centroid.y = sum_y / n;
+            centroid.z = sum_z / n;
+            centroid.intensity = sum_intensity / n;
+            centroid.offset_time = sum_offset_time / n;  // Average offset_time for undistortion
             
             return centroid;
         }
@@ -476,13 +494,19 @@ private:
     };
     
     VoxelKey GetVoxelKey(const Point3D& point) const {
-        int vx = static_cast<int>(std::floor(point.x / m_leaf_size));
-        int vy = static_cast<int>(std::floor(point.y / m_leaf_size));
-        int vz = static_cast<int>(std::floor(point.z / m_leaf_size));
+        // Fast floor using pre-computed inverse (multiplication instead of division)
+        // For negative coords: int(-0.5) = 0, but floor(-0.5) = -1, so we need adjustment
+        int vx = (point.x >= 0) ? static_cast<int>(point.x * m_inv_leaf_size) 
+                                : static_cast<int>(point.x * m_inv_leaf_size) - 1;
+        int vy = (point.y >= 0) ? static_cast<int>(point.y * m_inv_leaf_size) 
+                                : static_cast<int>(point.y * m_inv_leaf_size) - 1;
+        int vz = (point.z >= 0) ? static_cast<int>(point.z * m_inv_leaf_size) 
+                                : static_cast<int>(point.z * m_inv_leaf_size) - 1;
         return VoxelKey(vx, vy, vz);
     }
     
     float m_leaf_size;
+    float m_inv_leaf_size;  // Pre-computed 1.0f / m_leaf_size
     float m_planarity_threshold;
     bool m_enable_planarity_filter;
     int m_hierarchy_factor = 5;  // L1 = factor × L0

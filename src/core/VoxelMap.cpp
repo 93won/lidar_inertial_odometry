@@ -316,7 +316,7 @@ void VoxelMap::UpdateVoxelMap(const PointCloudPtr& new_cloud,
             // Check if geometry changed significantly
             int child_count_change = std::abs(current_child_count - node_L1.last_child_count);
 
-            // If child count didn't change much, check point-to-plane distances
+            // If child count didn't change much, skip!
             if (child_count_change == 0)
             {
 
@@ -372,13 +372,13 @@ void VoxelMap::UpdateVoxelMap(const PointCloudPtr& new_cloud,
             // Not planar enough - delete L1 and all its L0 children immediately
             node_L1.has_surfel = false;
             
-            // // Delete all L0 children from m_voxels_L0
-            // for (const VoxelKey& key_L0 : node_L1.occupied_children) {
-            //     m_voxels_L0.erase(key_L0);
-            // }
+            // Delete all L0 children from m_voxels_L0
+            for (const VoxelKey& key_L0 : node_L1.occupied_children) {
+                m_voxels_L0.erase(key_L0);
+            }
             
-            // // Erase L1 voxel itself
-            // m_voxels_L1.erase(it_L1);
+            // Erase L1 voxel itself
+            m_voxels_L1.erase(it_L1);
             
             continue;
         }

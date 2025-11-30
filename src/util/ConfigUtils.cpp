@@ -56,7 +56,7 @@ void SetDefaultConfig(LIOConfig& config) {
     config.viewer.show_map = false;
     config.viewer.show_voxel_cubes = false;
     config.viewer.follow_frame = true;
-    config.viewer.auto_playback = false;
+    config.viewer.auto_playback = true;
     config.viewer.point_size = 2.0f;
     config.viewer.trajectory_width = 3.0f;
     config.viewer.coordinate_frame_size = 2.0f;

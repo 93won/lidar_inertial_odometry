@@ -9,42 +9,37 @@ dataset:
   lidar_timestamps: "lidar_timestamps.txt"
 
 
-# Extrinsics: LiDAR to IMU transformation
-# T_il: Transformation from IMU frame to LiDAR frame
 # p_l = R_il * p_i + t_il
 extrinsics:
-  # Rotation matrix (3x3) - row-major
-  # R3LIVE/Avia dataset: sensors are aligned (identity matrix)
   R_il: [
     [1.0, 0.0, 0.0],
     [0.0, 1.0, 0.0],
     [0.0, 0.0, 1.0]
   ]
-  # Translation vector (3x1) [meters]
-  t_il: [-0.011, -0.02329, 0.04412]
 
+  t_il: [0.050, 0.000, -0.055]
 
 # Estimator parameters (indoor: 0.5 / 5 / 1.0, outdoor: 1.0 / 3 / 2.0)
 estimator:
   enable_undistortion: true
   scan_duration: 0.1          # LiDAR scan duration in seconds (100ms for Livox Avia)
-  init_imu_samples: 300       # Number of IMU samples for initialization
+  init_imu_samples: 1000       # Number of IMU samples for initialization
   voxel_size: 0.5       # Voxel size in meters for VoxelMap
-  max_iterations: 4         # Maximum Gauss-Newton iterations
-  convergence_threshold: 0.005 # Convergence threshold for optimization
+  max_iterations: 10        # Maximum Gauss-Newton iterations
+  convergence_threshold: 0.001 # Convergence threshold for optimization
 
   map_planarity_threshold: 0.1  # Planarity threshold for VoxelMap surfel creation
 
   # Local map parameters
-  min_distance: 1.0             # Minimum distance for lidar filtering (meters)
+  min_distance: 0.0             # Minimum distance for lidar filtering (meters)
   max_distance: 100.0           # Maximum distance for lidar filtering (meters)
-  max_voxel_hit_count: 1000     # Maximum hit count for voxel occupancy (1-N, default: 10)
-  init_hit_count: 1000            # Initial hit count when adding new points to voxel
+  max_voxel_hit_count: 10     # Maximum hit count for voxel occupancy (1-N, default: 10)
+  init_hit_count: 1            # Initial hit count when adding new points to voxel
   voxel_hierarchy_factor: 3      # L1 voxel factor: L1 = factor × L0 (e.g., 3 = 3×3×3, 5 = 5×5×5, 7 = 7×7×7)
 
   # Keyframe parameters (distance/rotation based)
   keyframe_translation_threshold: 1.0   # meters - triggers keyframe when moved > threshold
-  keyframe_rotation_threshold: 5.0     # ignore rotation based keyframe creation
+  keyframe_rotation_threshold: 30.0     
                                          # Translation: Larger (1.0m) = fewer KF, Smaller (0.2m) = more KF
                                          # Rotation: Larger (20°) = fewer KF, Smaller (5°) = more KF
                                          # Recommended: trans=0.3-0.7m, rot=5-15°
@@ -61,8 +56,9 @@ playback:
 
 
 imu:
-  gyr_cov: 1e-4              # Gyroscope noise covariance [rad/s]
-  acc_cov: 1e-2               # Accelerometer noise covariance [m/s^2]
-  b_gyr_cov: 1e-8         # Gyroscope bias covariance [rad/s]
-  b_acc_cov: 1e-6          # Accelerometer bias covariance [m/s^2]
+  gyr_cov: 1e-1              # Gyroscope noise covariance [rad/s]
+  acc_cov: 1e-1               # Accelerometer noise covariance [m/s^2]
+  b_gyr_cov: 1e-6         # Gyroscope bias covariance [rad/s]
+  b_acc_cov: 1e-4          # Accelerometer bias covariance [m/s^2]
   gravity: [0.0, 0.0, -9.81]  # Gravity vector [m/s^2]
+

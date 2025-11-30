@@ -245,22 +245,6 @@ private:
     double m_last_update_time;
     int m_frame_count;
 
-    // Timing statistics (100-frame averages)
-    double m_sum_preprocess_time = 0.0;
-    double m_sum_lidar_time = 0.0;
-    double m_sum_map_time = 0.0;
-    int m_timing_frame_count = 0;
-
-    // Lidar update timing breakdown
-    double m_sum_corr_time = 0.0;      // FindCorrespondences
-    double m_sum_jacobian_time = 0.0;  // ComputeLidarJacobians
-    double m_sum_solve_time = 0.0;     // Kalman solve + state update
-
-    // FindCorrespondences breakdown
-    double m_sum_corr_transform_time = 0.0;   // Point transformation
-    double m_sum_corr_surfel_time = 0.0;      // GetSurfelAtPoint (map lookup)
-    double m_sum_corr_add_time = 0.0;         // Adding correspondences
-
     unsigned int m_num_valid_correspondences = 0;  // Number of valid correspondences in current scan
     
     // Data buffers (thread-safe)

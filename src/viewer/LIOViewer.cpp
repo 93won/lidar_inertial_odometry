@@ -30,7 +30,7 @@ LIOViewer::LIOViewer()
     , m_show_map_points("ui.5. Show Map Points", true, true)  // Show surfel centroids as green points (default ON)
     , m_show_voxel_cubes("ui.6. Show L0 Voxels", false, true)  // Show L0 voxel cubes (heavy)
     , m_show_surfels("ui.7. Show Surfels", false, true)  // Show surfel discs with normals
-    , m_auto_playback("ui.8. Auto Playback", false, true)  // Enable auto playback by default
+    , m_auto_playback("ui.8. Auto Playback", true, true)  // Enable auto playback by default
     , m_step_forward_button("ui.9. Step Forward", false, false)
     , m_follow_mode("ui.10. Follow Mode (Top-Down)", true, true)  // Enable follow mode with mouse zoom support
     , m_frame_id("info.Frame ID", 0)
@@ -634,9 +634,17 @@ void LIOViewer::DrawL1VoxelCubes(std::shared_ptr<VoxelMap> voxel_map) {
     // L1 voxel size
     float l1_voxel_size = voxel_map->GetVoxelSize() * voxel_map->GetHierarchyFactor();
     
-    // Draw L1 voxel cubes as wireframes
-    glColor4f(0.0f, 0.8f, 0.2f, 0.5f);  // Green wireframe
+    // Fixed z range for colormap (same as L0)
+    const float z_min = -1.0f;
+    const float z_max = 3.0f;
+    const float z_range = z_max - z_min;
+    
+    // Enable blending for transparency
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    
     glLineWidth(1.0f);
+    const float alpha = 0.15f;  // Fixed alpha (same style as L0)
     
     for (const auto& surfel_data : surfels) {
         const VoxelKey& key_L1 = std::get<3>(surfel_data);
@@ -648,8 +656,25 @@ void LIOViewer::DrawL1VoxelCubes(std::shared_ptr<VoxelMap> voxel_map) {
             (key_L1.z + 0.5f) * l1_voxel_size
         );
         
+        // Calculate color based on z height (same as L0)
+        float normalized_z = (center.z() - z_min) / z_range;
+        normalized_z = std::min(1.0f, std::max(0.0f, normalized_z));
+        
+        float r = 0.0f;
+        float g = 1.0f - normalized_z;
+        float b = normalized_z;
+        
+        // Draw filled cube
+        glColor4f(r, g, b, alpha);
+        DrawCubeFilled(center, l1_voxel_size);
+        
+        // Draw edges with slightly higher alpha
+        glColor4f(r, g, b, alpha * 2.0f);
         DrawCube(center, l1_voxel_size);
     }
+    
+    glDisable(GL_BLEND);
+    glLineWidth(1.0f);
 }
 
 void LIOViewer::DrawMapPoints(std::shared_ptr<VoxelMap> voxel_map) {

@@ -77,50 +77,46 @@ void VoxelGrid::Filter(PointCloud& output) {
         return;
     }
     
-    // L2 voxel size for noise filtering (5x5x5 L0 voxels per L2)
-    // Note: This is only for downsampling, not actual VoxelMap structure
-    const float l2_size = m_leaf_size * 5;
-    
-    // Step 1: Group points into L2 voxels first (using fast hash map)
-    ankerl::unordered_dense::map<VoxelKey, std::vector<Point3D>, VoxelKeyHash> l2_voxel_map;
+    // Direct L0 voxel hashing with centroid calculation
+    ankerl::unordered_dense::map<VoxelKey, VoxelPoints, VoxelKeyHash> voxel_map;
+    voxel_map.reserve(10);  // Pre-allocate for ~3 pts per voxel
     
     for (size_t i = 0; i < m_input_cloud->size(); ++i) {
         const Point3D& point = m_input_cloud->at(i);
-        int l2_x = static_cast<int>(std::floor(point.x / l2_size));
-        int l2_y = static_cast<int>(std::floor(point.y / l2_size));
-        int l2_z = static_cast<int>(std::floor(point.z / l2_size));
-        VoxelKey l2_key(l2_x, l2_y, l2_z);
-        l2_voxel_map[l2_key].push_back(point);
+        VoxelKey key = GetVoxelKey(point);
+        voxel_map[key].AddPoint(point);
     }
     
-    // Step 2: For each L2 with >1 point, subdivide into L0 voxels
-    ankerl::unordered_dense::map<VoxelKey, VoxelPoints, VoxelKeyHash> l0_voxel_map;
-    
-    for (auto& l2_voxel : l2_voxel_map) {
-        // Skip isolated L2 voxels (only 1 point = noise)
-        if (l2_voxel.second.size() == 0 ) {
-            continue;
-        }
-        
-        // Subdivide into L0 voxels
-        for (const Point3D& point : l2_voxel.second) {
-            VoxelKey l0_key = GetVoxelKey(point);
-            l0_voxel_map[l0_key].AddPoint(point);
-        }
-    }
-    
+    // Extract centroids (with optional planarity filtering)
     output.clear();
-    output.reserve(l0_voxel_map.size());
+    output.reserve(voxel_map.size());
     
-    // Step 3: Process each L0 voxel
-    for (auto& voxel : l0_voxel_map) {
-        VoxelPoints& voxel_points = voxel.second;
-
-                
-     
-        // Extract and add centroid to output
-        output.push_back(voxel_points.GetCentroid());
+    // int total_voxels = 0;
+    // int checked_voxels = 0;  // voxels with >= 3 points
+    // int passed_voxels = 0;   // passed planarity check
+    // int skipped_voxels = 0;  // failed planarity check
+    
+    for (auto& voxel : voxel_map) {
+        // total_voxels++;
+        
+        // // If planarity filter enabled, check planarity score (need at least 3 points)
+        // if (m_enable_planarity_filter && voxel.second.GetPointCount() >= 3) {
+        //     checked_voxels++;
+        //     float planarity = voxel.second.CalculatePlanarity();
+        //     // Keep only planar voxels (low planarity score = more planar)
+        //     if (planarity > 0.01f) {
+        //         skipped_voxels++;
+        //         continue;  // Skip non-planar voxels
+        //     }
+        //     passed_voxels++;
+        // }
+        output.push_back(voxel.second.GetCentroid());
     }
+    
+    // if (m_enable_planarity_filter) {
+    //     spdlog::info("[VoxelGrid] Total: {}, Checked(>=3pts): {}, Passed: {}, Skipped: {}, Output: {}",
+    //                  total_voxels, checked_voxels, passed_voxels, skipped_voxels, output.size());
+    // }
 }
 
 // ===== RangeFilter Implementation =====

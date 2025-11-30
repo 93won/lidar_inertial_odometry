@@ -1,5 +1,3 @@
-
-
 # Dataset paths (will be overridden by command line argument)
 dataset:
   lidar_folder: "lidar"
