@@ -24,16 +24,17 @@ estimator:
   scan_duration: 0.1          # LiDAR scan duration in seconds (100ms for Livox Avia)
   init_imu_samples: 500       # Number of IMU samples for initialization
   voxel_size: 0.5       # Voxel size in meters for VoxelMap
-  max_iterations: 2       # Maximum Gauss-Newton iterations
-  convergence_threshold: 0.001 # Convergence threshold for optimization
+  max_iterations: 4       # Maximum Gauss-Newton iterations
+  convergence_threshold: 0.004 # Convergence threshold for optimization
 
   # Surfel filtering
-  map_planarity_threshold: 0.3    # Planarity threshold (sigma_min/sigma_max, smaller = stricter)
+  map_planarity_threshold: 0.1    # Planarity threshold (sigma_min/sigma_max, smaller = stricter)
 
   # Temporal bin downsampling (alternative to voxel-based downsampling)
-  temporal_bins: 2000           # Number of bins for temporal downsampling (0 = use voxel-based)
+  # NOTE: temporal_bins is for Livox non-repetitive scanning pattern
+  # For spinning LiDARs like Ouster (NTU VIRAL), set to 0 to use voxel-based only
+  temporal_bins: 0              # 0 = disable temporal binning, use voxel-based downsampling
                                 # offset_time [0~scan_duration] is divided into N bins
-                                # Only one point per bin is kept (first-come basis)
   temporal_then_voxel: false    # Apply voxel downsample after temporal bin (combined filtering)
 
   # Local map parameters
@@ -51,7 +52,7 @@ viewer:
 
 # Playback parameters
 playback:
-  playback_speed: 1.0          # Playback speed multiplier
+  playback_speed: 10.0          # Playback speed multiplier
 
 imu:
   gyr_cov: 1e-1              # Gyroscope noise covariance [rad/s]

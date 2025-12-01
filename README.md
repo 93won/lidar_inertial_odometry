@@ -47,7 +47,7 @@ This will:
 
 ### Quick Start
 
-#### NTU VIRAL Dataset (Under Construction!)
+#### NTU VIRAL Dataset
 
 **Download Pre-processed Dataset**:
 - **Google Drive**: [NTU VIRAL Parsed Dataset](https://drive.google.com/drive/folders/1FMQRJge70qzWWRuTpiXJJMa5MDoF7u4z?usp=sharing)

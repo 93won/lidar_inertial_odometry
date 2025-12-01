@@ -435,9 +435,6 @@ void Estimator::ProcessLidar(const LidarData& lidar) {
     // === 1. Preprocessing: Downsampling + Undistortion + Range filtering ===
     auto preprocess_start = std::chrono::high_resolution_clock::now();
     
-    // Log input size
-    size_t input_size = lidar.cloud ? lidar.cloud->size() : 0;
-    
     // Temporal bin-based downsampling (if temporal_bins > 0)
     PointCloudPtr downsampled_scan;
     if (m_params.temporal_bins > 0) {
@@ -446,8 +443,6 @@ void Estimator::ProcessLidar(const LidarData& lidar) {
             m_params.temporal_bins,
             static_cast<float>(m_params.scan_duration)
         );
-        
-        size_t after_temporal = downsampled_scan ? downsampled_scan->size() : 0;
         
         // Optionally apply voxel downsample after temporal bin
         if (m_params.temporal_then_voxel) {
@@ -458,14 +453,7 @@ void Estimator::ProcessLidar(const LidarData& lidar) {
             scan_filter.SetPlanarityFilter(true);
             scan_filter.SetHierarchyFactor(m_params.voxel_hierarchy_factor);
             scan_filter.Filter(*voxel_filtered);
-            
-            size_t after_voxel = voxel_filtered->size();
-            spdlog::info("[Estimator] Filter: Input={} -> Temporal={} -> Voxel={}", 
-                         input_size, after_temporal, after_voxel);
             downsampled_scan = voxel_filtered;
-        } else {
-            spdlog::info("[Estimator] Filter: Input={} -> Temporal={}", 
-                         input_size, after_temporal);
         }
     } else {
         // Fallback to voxel-based downsampling only
@@ -476,9 +464,6 @@ void Estimator::ProcessLidar(const LidarData& lidar) {
         scan_filter.SetPlanarityFilter(true);
         scan_filter.SetHierarchyFactor(m_params.voxel_hierarchy_factor);
         scan_filter.Filter(*downsampled_scan);
-        
-        spdlog::info("[Estimator] Filter: Input={} -> Voxel={}", 
-                     input_size, downsampled_scan->size());
     }
 
     PointCloudPtr undistorted_cloud = downsampled_scan;
@@ -498,31 +483,13 @@ void Estimator::ProcessLidar(const LidarData& lidar) {
     const float min_range = static_cast<float>(m_params.min_range);
     const float max_range = static_cast<float>(m_params.max_map_distance);
     
-    // Debug: track range statistics
-    int below_min = 0, above_max = 0, in_range = 0;
-    float min_found = 1e9f, max_found = 0.0f;
-    
     for(unsigned int i = 0; i < initial_size; ++i) {
         const auto& point = undistorted_cloud->at(i);
         float range = std::sqrt(point.x * point.x + point.y * point.y + point.z * point.z);
-        
-        min_found = std::min(min_found, range);
-        max_found = std::max(max_found, range);
-        
-        if (range < min_range) {
-            below_min++;
-        } else if (range > max_range) {
-            above_max++;
-        } else {
-            in_range++;
+        if (range >= min_range && range <= max_range) {
             range_filtered_scan->push_back(point);
         }
     }
-    
-    spdlog::info("[Estimator] Range filter: min_range={:.1f}m, max_range={:.1f}m", min_range, max_range);
-    spdlog::info("[Estimator] Range filter: data_range=[{:.2f}m ~ {:.2f}m]", min_found, max_found);
-    spdlog::info("[Estimator] Range filter: below_min={}, in_range={}, above_max={} -> output={}", 
-                 below_min, in_range, above_max, range_filtered_scan->size());
     
     auto preprocess_end = std::chrono::high_resolution_clock::now();
     double preprocess_time = std::chrono::duration<double, std::milli>(preprocess_end - preprocess_start).count();
