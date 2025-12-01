@@ -112,11 +112,7 @@ Evaluation on [M3DGR Dataset](https://github.com/sjtuyinjie/M3DGR) comparing wit
 | **Livox Mid360** | APE RMSE (m) | 0.342 | 0.342 | 0.352 |
 | **Livox Mid360** | FPS | **690** | 282 | 353 |
 
-### Key Results
 
-- **4.25× faster** than FAST-LIO2 with **8% better accuracy** (AVIA)
-- **2.89× faster** than FASTER-LIO with **equivalent accuracy** (<1% difference)
-- **2.45× faster** than FAST-LIO2 with **identical accuracy** (Mid360)
 
 ### Detailed Results (Livox AVIA)
 

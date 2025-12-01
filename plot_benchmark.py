@@ -11,8 +11,8 @@ labels = [
 # Bold indices for Surfel-LIO
 bold_indices = [2, 5]
 
-# Data (RMSE truncated to 2 decimal places)
-rmse = [0.39, 0.36, 0.36, 0.34, 0.35, 0.34]
+# Data (original RMSE values)
+rmse = [0.397, 0.362, 0.365, 0.342, 0.352, 0.342]
 fps = [125, 184, 531, 282, 353, 690]
 
 # Colors: FAST-LIO2, FASTER-LIO, Surfel-LIO (repeated for 2 sensors)
@@ -66,11 +66,11 @@ ax1.axvline(x=center_line_x, color='gray', linestyle='--', linewidth=1.5, alpha=
 
 # Value labels on bars
 for bar, val in zip(bars1, rmse):
-    ax1.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01, f'{val:.2f}', 
-             ha='center', va='bottom', fontsize=9, fontweight='bold')
+    ax1.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01, f'{val:.3f}', 
+             ha='center', va='bottom', fontsize=8, fontweight='bold')
 for bar, val in zip(bars2, fps):
     ax2.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 10, f'{val}', 
-             ha='center', va='bottom', fontsize=9, fontweight='bold')
+             ha='center', va='bottom', fontsize=8, fontweight='bold')
 
 # Legend
 from matplotlib.patches import Patch

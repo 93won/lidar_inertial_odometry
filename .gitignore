@@ -47,6 +47,12 @@ benchmark/*
 !benchmark/.gitkeep
 scripts/
 
+# Benchmark plots and scripts
+benchmark_comparison.png
+benchmark_comparison.pdf
+plot_benchmark.py
+cpu_monitor.py
+
 # OS files
 .DS_Store
 Thumbs.db
