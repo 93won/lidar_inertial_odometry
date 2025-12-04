@@ -13,6 +13,7 @@
 #include "LIOViewer.h"
 #include "Estimator.h"
 #include "ConfigUtils.h"
+#include "LoopClosureDetector.h"
 #include <iostream>
 #include <fstream>
 #include <iomanip>
@@ -460,6 +461,13 @@ int main(int argc, char** argv) {
     estimator.m_params.temporal_then_voxel = config.estimator.temporal_then_voxel;
     estimator.m_params.scan_duration = config.estimator.scan_duration;
     
+    // Configure loop closure parameters from config
+    estimator.m_params.enable_loop_closure = config.loop_closure.enable;
+    estimator.m_params.loop_similarity_threshold = config.loop_closure.similarity_threshold;
+    estimator.m_params.loop_min_keyframe_gap = config.loop_closure.min_keyframe_gap;
+    estimator.m_params.loop_max_search_distance = config.loop_closure.max_search_distance;
+    estimator.m_params.loop_keyframe_distance = config.loop_closure.keyframe_translation_threshold;
+    
     // Configure IMU noise parameters from config (convert covariance to std deviation)
     estimator.m_params.gyr_noise_std = std::sqrt(config.imu.gyr_cov);
     estimator.m_params.acc_noise_std = std::sqrt(config.imu.acc_cov);
@@ -665,6 +673,17 @@ int main(int argc, char** argv) {
                     std::shared_ptr<lio::VoxelMap> voxel_map = estimator.GetVoxelMap();
                     if (voxel_map) {
                         viewer.UpdateVoxelMap(voxel_map);
+                    }
+                    
+                    // Update keyframe positions for visualization
+                    auto loop_detector = estimator.GetLoopClosureDetector();
+                    if (loop_detector && loop_detector->GetKeyframeCount() > 0) {
+                        std::vector<Eigen::Vector3f> keyframe_positions;
+                        auto keyframes = loop_detector->GetAllKeyframes();
+                        for (const auto& kf : keyframes) {
+                            keyframe_positions.push_back(kf->GetPosition());
+                        }
+                        viewer.UpdateKeyframes(keyframe_positions);
                     }
                 }
                 

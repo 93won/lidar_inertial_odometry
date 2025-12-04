@@ -22,7 +22,7 @@ echo "========================================"
 if [ -n "$DOCKER_CONTAINER" ]; then
     echo "Running in Docker container - skipping apt updates (dependencies pre-installed)"
 else
-    sudo apt update
+    sudo apt update || true  # Continue even if apt update fails
     sudo apt install -y \
         cmake \
         build-essential \
@@ -30,7 +30,8 @@ else
         libgl1-mesa-dev \
         libglu1-mesa-dev \
         libglew-dev \
-        libyaml-cpp-dev
+        libyaml-cpp-dev \
+        libopencv-dev
 
     echo "System dependencies installed successfully!"
 fi

@@ -17,6 +17,7 @@
 #include "PointCloudUtils.h"
 #include "VoxelMap.h"
 #include "ProbabilisticKernelOptimizer.h"
+#include "LoopClosureDetector.h"
 #include <vector>
 #include <memory>
 #include <deque>
@@ -138,6 +139,11 @@ public:
         return m_processing_times;
     }
     
+    /// Get loop closure detector (for accessing keyframes)
+    std::shared_ptr<LoopClosureDetector> GetLoopClosureDetector() const {
+        return m_loop_detector;
+    }
+    
     // Configuration parameters
     struct Parameters {
         // IMU parameters
@@ -198,6 +204,13 @@ public:
         int temporal_bins = 1000;              // Number of bins for temporal downsampling (0 = use voxel)
         bool temporal_then_voxel = false;      // Apply voxel downsample after temporal bin
         double scan_duration = 0.1;            // LiDAR scan duration in seconds
+        
+        // Loop closure parameters
+        bool enable_loop_closure = false;               // Enable loop closure detection
+        float loop_similarity_threshold = 0.3f;         // LiDAR Iris similarity threshold
+        int loop_min_keyframe_gap = 50;                 // Minimum keyframe gap
+        float loop_max_search_distance = 15.0f;         // Max search distance (meters)
+        float loop_keyframe_distance = 1.0f;            // Keyframe creation distance (meters)
     } m_params;
 
 private:
@@ -302,6 +315,9 @@ private:
     
     // Probabilistic Kernel Optimization
     std::shared_ptr<ProbabilisticKernelOptimizer> m_pko;
+    
+    // Loop Closure Detection
+    std::shared_ptr<LoopClosureDetector> m_loop_detector;
 };
 
 } // namespace lio

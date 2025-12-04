@@ -80,6 +80,12 @@ Estimator::Estimator()
     pko_config.gmm_sample_size = 100;
     m_pko = std::make_shared<ProbabilisticKernelOptimizer>(pko_config);
     
+    // Initialize Loop Closure Detector (disabled by default, enabled via config)
+    // Will be reconfigured when UpdateProcessNoise() is called after config is set
+    LoopClosureConfig loop_config;
+    loop_config.enable_loop_detection = false;  // Disabled by default
+    m_loop_detector = std::make_shared<LoopClosureDetector>(loop_config);
+    
     spdlog::info("[Estimator] Initialized with default extrinsics (R3LIVE/Avia dataset)");
     spdlog::info("[Estimator] t_il = [{:.5f}, {:.5f}, {:.5f}]", 
                  m_params.t_il.x(), m_params.t_il.y(), m_params.t_il.z());
@@ -101,6 +107,22 @@ void Estimator::UpdateProcessNoise() {
     m_process_noise.block<3,3>(9,9) *= m_params.gyr_bias_noise_std * m_params.gyr_bias_noise_std;
     m_process_noise.block<3,3>(12,12) *= m_params.acc_bias_noise_std * m_params.acc_bias_noise_std;
     m_process_noise.block<3,3>(15,15) *= m_params.gravity_noise_std * m_params.gravity_noise_std;
+    
+    // Update loop closure detector configuration
+    if (m_loop_detector) {
+        LoopClosureConfig loop_config;
+        loop_config.enable_loop_detection = m_params.enable_loop_closure;
+        loop_config.similarity_threshold = m_params.loop_similarity_threshold;
+        loop_config.min_keyframe_gap = m_params.loop_min_keyframe_gap;
+        loop_config.max_search_distance = m_params.loop_max_search_distance;
+        loop_config.keyframe_translation_threshold = m_params.loop_keyframe_distance;
+        m_loop_detector->UpdateConfig(loop_config);
+        
+        if (m_params.enable_loop_closure) {
+            spdlog::info("[Estimator] Loop closure enabled: threshold={:.3f}, keyframe_dist={:.2f}m",
+                        m_params.loop_similarity_threshold, m_params.loop_keyframe_distance);
+        }
+    }
     
     spdlog::debug("[Estimator] Process noise matrix updated with current IMU parameters");
 }
@@ -519,6 +541,35 @@ void Estimator::ProcessLidar(const LidarData& lidar) {
     UpdateLocalMap(range_filtered_scan);
     auto map_end = std::chrono::high_resolution_clock::now();
     double map_time = std::chrono::duration<double, std::milli>(map_end - map_start).count();
+    
+    // === 4. Loop Closure: Add keyframe if needed ===
+    if (m_params.enable_loop_closure && m_loop_detector) {
+        if (m_loop_detector->ShouldCreateKeyframe(m_current_state)) {
+            // Add keyframe with current processed scan
+            int kf_id = m_loop_detector->AddKeyframe(lidar.timestamp, m_current_state, range_filtered_scan);
+            
+            if (kf_id >= 0) {
+                // Detect loop closures for this keyframe
+                // spdlog::info("[Estimator] Keyframe {} added at t={:.3f}. Checking for loop closures...", 
+                //              kf_id, lidar.timestamp);
+                auto loop_candidates = m_loop_detector->DetectLoopClosures();
+
+                // Print detected loop closures
+                for (const auto& loop : loop_candidates) {
+                    spdlog::info("[Estimator] Detected loop closure: Keyframe {} <-> Keyframe {} (similarity={:.3f})", 
+                                 loop.query_keyframe_id, loop.match_keyframe_id, loop.similarity_score);
+                }   
+
+                // // If empty, no loops detected
+                // if (loop_candidates.empty()) {
+                //     spdlog::warn("[Estimator] No loop closures detected for keyframe {}", kf_id);
+                // }   
+                
+                // TODO: Handle loop closure (pose graph optimization)
+                // For now, just detect and log
+            }
+        }
+    }
     
     // Update statistics
     auto end_time = std::chrono::high_resolution_clock::now();

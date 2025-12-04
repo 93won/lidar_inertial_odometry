@@ -65,3 +65,11 @@ imu:
   b_gyr_cov: 1e-8         # Gyroscope bias covariance [rad/s]
   b_acc_cov: 1e-6          # Accelerometer bias covariance [m/s^2]
   gravity: [0.0, 0.0, -9.81]  # Gravity vector [m/s^2]
+
+# Loop closure parameters
+loop_closure:
+  enable: false                        # Enable loop closure detection
+  similarity_threshold: 0.3           # LidarIris similarity threshold (lower = stricter)
+  min_keyframe_gap: 50                # Minimum keyframe gap for loop candidates
+  max_search_distance: 30.0           # Maximum distance to search for loop candidates (meters)
+  keyframe_translation_threshold: 1.0 # Distance threshold for keyframe creation (meters)

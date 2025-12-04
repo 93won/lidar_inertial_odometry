@@ -11,6 +11,7 @@ find_package(Eigen3 REQUIRED)
 find_package(GLEW REQUIRED)
 find_package(yaml-cpp REQUIRED)
 find_package(OpenMP REQUIRED)
+find_package(OpenCV REQUIRED)
 
 # Use Pangolin from thirdparty
 set(Pangolin_DIR ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/pangolin)
@@ -33,6 +34,9 @@ include_directories(${spdlog_DIR})
 # Use unordered_dense from thirdparty (header-only, fast hash map)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/unordered_dense)
 
+# LidarIris for loop closure detection
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/LidarIris)
+
 # Include directories
 include_directories(src)
 include_directories(src/core)
@@ -50,6 +54,9 @@ add_library(lio_viewer
     src/core/State.cpp
     src/core/Estimator.cpp
     src/core/ProbabilisticKernelOptimizer.cpp
+    src/core/LoopClosureDetector.cpp
+    thirdparty/LidarIris/LidarIris.cpp
+    thirdparty/LidarIris/fftm/fftm.cpp
 )
 
 target_link_libraries(lio_viewer
@@ -64,6 +71,7 @@ target_link_libraries(lio_viewer
     GLEW::GLEW
     GL
     OpenMP::OpenMP_CXX
+    ${OpenCV_LIBS}
 )
 
 # Main LIO player executable

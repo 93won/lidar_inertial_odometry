@@ -34,6 +34,9 @@
 
 namespace lio {
 
+// Forward declaration
+struct Keyframe;
+
 /**
  * @brief IMU bias data for plotting
  */
@@ -138,6 +141,12 @@ public:
     void UpdateVoxelMap(std::shared_ptr<VoxelMap> voxel_map);
     
     /**
+     * @brief Update keyframe positions for visualization
+     * @param keyframes Vector of keyframe positions (world frame)
+     */
+    void UpdateKeyframes(const std::vector<Eigen::Vector3f>& keyframe_positions);
+    
+    /**
      * @brief Check if auto playback is enabled
      * @return True if auto playback is on
      */
@@ -202,6 +211,7 @@ private:
     PointCloudPtr m_map_cloud;                         ///< Map point cloud
     std::vector<std::pair<Eigen::Vector3f, float>> m_map_centroids; ///< Cached map centroids (centroid, alpha)
     std::shared_ptr<VoxelMap> m_voxel_map;             ///< Voxel map for cube visualization
+    std::vector<Eigen::Vector3f> m_keyframe_positions; ///< Keyframe positions for visualization
     Eigen::Matrix4f m_current_pose;                    ///< Current pose
     std::vector<Eigen::Matrix4f> m_trajectory;         ///< Trajectory
     std::deque<IMUBiasPlotData> m_bias_buffer;         ///< IMU bias data buffer for plotting
@@ -222,6 +232,7 @@ private:
     pangolin::Var<bool> m_show_map_points;             ///< Show surfel centroids as green points
     pangolin::Var<bool> m_show_voxel_cubes;            ///< Show voxel cubes checkbox
     pangolin::Var<bool> m_show_surfels;                ///< Show L1 surfels checkbox
+    pangolin::Var<bool> m_show_keyframes;              ///< Show keyframe positions checkbox
     pangolin::Var<bool> m_auto_playback;               ///< Auto playback mode
     pangolin::Var<bool> m_step_forward_button;         ///< Step forward button
     pangolin::Var<bool> m_follow_mode;                 ///< Follow mode (top-down view with zoom support)
@@ -294,6 +305,11 @@ private:
      * @param voxel_map Voxel map containing surfel data
      */
     void DrawSurfels(std::shared_ptr<VoxelMap> voxel_map);
+    
+    /**
+     * @brief Draw keyframe positions as cyan spheres
+     */
+    void DrawKeyframes();
     
     /**
      * @brief Helper function to draw a single cube (wireframe)

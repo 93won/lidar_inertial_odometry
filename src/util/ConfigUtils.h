@@ -100,6 +100,15 @@ struct LIOConfig {
         Eigen::Matrix3d R_il;           // Rotation from LiDAR to IMU
         Eigen::Vector3d t_il;           // Translation from LiDAR to IMU (meters)
     } extrinsics;
+    
+    // Loop closure parameters
+    struct LoopClosureParams {
+        bool enable;                        // Enable loop closure detection
+        float similarity_threshold;         // LidarIris similarity threshold (lower = stricter)
+        int min_keyframe_gap;               // Minimum keyframe gap for loop candidates
+        float max_search_distance;          // Maximum distance to search for loop candidates (meters)
+        float keyframe_translation_threshold; // Distance threshold for keyframe creation (meters)
+    } loop_closure;
 };
 
 /**

@@ -79,6 +79,13 @@ void SetDefaultConfig(LIOConfig& config) {
     // Extrinsics (R3LIVE/Avia dataset default values)
     config.extrinsics.R_il = Eigen::Matrix3d::Identity();
     config.extrinsics.t_il << 0.04165, 0.02326, -0.0284;  // R3LIVE/Avia sensor offset
+    
+    // Loop closure parameters
+    config.loop_closure.enable = false;
+    config.loop_closure.similarity_threshold = 0.3f;
+    config.loop_closure.min_keyframe_gap = 50;
+    config.loop_closure.max_search_distance = 30.0f;
+    config.loop_closure.keyframe_translation_threshold = 1.0f;
 }
 
 bool LoadConfig(const std::string& config_path, LIOConfig& config) {
@@ -242,6 +249,21 @@ bool LoadConfig(const std::string& config_path, LIOConfig& config) {
                                           t[1].as<double>(), 
                                           t[2].as<double>();
             }
+        }
+        
+        // Load loop closure parameters
+        if (yaml_config["loop_closure"]) {
+            auto loop_closure = yaml_config["loop_closure"];
+            if (loop_closure["enable"]) 
+                config.loop_closure.enable = loop_closure["enable"].as<bool>();
+            if (loop_closure["similarity_threshold"]) 
+                config.loop_closure.similarity_threshold = loop_closure["similarity_threshold"].as<float>();
+            if (loop_closure["min_keyframe_gap"]) 
+                config.loop_closure.min_keyframe_gap = loop_closure["min_keyframe_gap"].as<int>();
+            if (loop_closure["max_search_distance"]) 
+                config.loop_closure.max_search_distance = loop_closure["max_search_distance"].as<float>();
+            if (loop_closure["keyframe_translation_threshold"]) 
+                config.loop_closure.keyframe_translation_threshold = loop_closure["keyframe_translation_threshold"].as<float>();
         }
         
         spdlog::info("[ConfigUtils] Successfully loaded config from: {}", config_path);

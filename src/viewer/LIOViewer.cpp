@@ -30,9 +30,10 @@ LIOViewer::LIOViewer()
     , m_show_map_points("ui.5. Show Map Points", true, true)  // Show surfel centroids as green points (default ON)
     , m_show_voxel_cubes("ui.6. Show L0 Voxels", false, true)  // Show L0 voxel cubes (heavy)
     , m_show_surfels("ui.7. Show Surfels", false, true)  // Show surfel discs with normals
-    , m_auto_playback("ui.8. Auto Playback", true, true)  // Enable auto playback by default
-    , m_step_forward_button("ui.9. Step Forward", false, false)
-    , m_follow_mode("ui.10. Follow Mode (Top-Down)", true, true)  // Enable follow mode with mouse zoom support
+    , m_show_keyframes("ui.8. Show Keyframes", true, true)  // Show keyframe positions (cyan)
+    , m_auto_playback("ui.9. Auto Playback", true, true)  // Enable auto playback by default
+    , m_step_forward_button("ui.10. Step Forward", false, false)
+    , m_follow_mode("ui.11. Follow Mode (Top-Down)", true, true)  // Enable follow mode with mouse zoom support
     , m_frame_id("info.Frame ID", 0)
     , m_total_points("info.Total Points", 0)
     , m_point_size(2.0f)
@@ -245,6 +246,11 @@ void LIOViewer::UpdateVoxelMap(std::shared_ptr<VoxelMap> voxel_map) {
     m_voxel_map = voxel_map;
 }
 
+void LIOViewer::UpdateKeyframes(const std::vector<Eigen::Vector3f>& keyframe_positions) {
+    std::lock_guard<std::mutex> lock(m_data_mutex);
+    m_keyframe_positions = keyframe_positions;
+}
+
 void LIOViewer::RenderLoop() {
     spdlog::info("[LIOViewer] Starting render loop");
     
@@ -317,6 +323,7 @@ void LIOViewer::RenderLoop() {
         std::shared_ptr<VoxelMap> voxel_map_copy;
         Eigen::Matrix4f current_pose_copy;
         std::vector<Eigen::Matrix4f> trajectory_copy;
+        std::vector<Eigen::Vector3f> keyframe_positions_copy;
         
         {
             std::lock_guard<std::mutex> lock(m_data_mutex);
@@ -325,6 +332,7 @@ void LIOViewer::RenderLoop() {
             voxel_map_copy = m_voxel_map;
             current_pose_copy = m_current_pose;
             trajectory_copy = m_trajectory;
+            keyframe_positions_copy = m_keyframe_positions;
         }
 
         // Draw 3D content
@@ -351,6 +359,11 @@ void LIOViewer::RenderLoop() {
         // Draw current scan point cloud
         if (m_show_point_cloud.Get() && current_cloud_copy && !current_cloud_copy->empty()) {
             DrawPointCloud();
+        }
+        
+        // Draw keyframe positions
+        if (m_show_keyframes.Get() && !keyframe_positions_copy.empty()) {
+            DrawKeyframes();
         }
 
         // Draw trajectory and current pose LAST so they appear on top
@@ -786,6 +799,26 @@ void LIOViewer::DrawSurfels(std::shared_ptr<VoxelMap> voxel_map) {
     
     glDisable(GL_BLEND);
     glLineWidth(1.0f);
+}
+
+void LIOViewer::DrawKeyframes() {
+    std::lock_guard<std::mutex> lock(m_data_mutex);
+    
+    if (m_keyframe_positions.empty()) {
+        return;
+    }
+    
+    // Draw keyframe positions as cyan points
+    glPointSize(10.0f);  // Large points for visibility
+    glColor3f(0.0f, 1.0f, 1.0f);  // Cyan color
+    
+    glBegin(GL_POINTS);
+    for (const auto& pos : m_keyframe_positions) {
+        glVertex3f(pos.x(), pos.y(), pos.z());
+    }
+    glEnd();
+    
+    glPointSize(1.0f);
 }
 
 void LIOViewer::DrawCurrentPose() {
