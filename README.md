@@ -1,20 +1,20 @@
-# Tightly-Coupled LiDAR-Inertial_Odometry
+# Tightly-Coupled LiDAR-Inertial Odometry
 
 [MIT Licence](LICENSE)
 
-## Documentation
+## Quick Start
 
-- [Quick Start](docs/Quick_Start.md)
-- [Release Notes — v0.1.0](docs/Release_Notes_v0.1.0.md)
-- [ROS 2 Wrapper](https://github.com/93won/lio_ros_wrapper) — requires updates for the v0.1.0 core.
+[Installation and dataset guide](docs/Quick_Start.md)
+
+## ROS 2 Wrapper
+
+[lio_ros_wrapper](https://github.com/93won/lio_ros_wrapper) — requires updates for the v0.1.0 core.
+
+## Release Notes
+
+- [v0.1.0](docs/Release_Notes_v0.1.0.md)
 
 ## References
-
-### Surfel-LIO
-
-Seungwon Choi, Dong-Gyu Park, Seo-Yeon Hwang, and Tae-Wan Kim. [Surfel-LIO: Fast LiDAR-Inertial Odometry with Pre-computed Surfels and Hierarchical Z-order Voxel Hashing](https://arxiv.org/abs/2512.03397), 2025.
-
-The paper describes the original surfel-based implementation; the current version uses an incremental voxel KD-tree.
 
 ```bibtex
 @misc{choi2025surfellio,
@@ -27,10 +27,6 @@ The paper describes the original surfel-based implementation; the current versio
   url={https://arxiv.org/abs/2512.03397}
 }
 ```
-
-### Probabilistic Kernel Optimization
-
-The repository includes this method as a separate module; the current iterated ESKF update does not use it.
 
 ```bibtex
 @article{choi2025pko,
