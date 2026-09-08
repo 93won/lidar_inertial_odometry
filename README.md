@@ -2,6 +2,10 @@
 
 [MIT Licence](LICENSE)
 
+## Demo
+
+[![LIO Demo](https://img.youtube.com/vi/AlfKASD0Rrc/hqdefault.jpg)](https://youtu.be/AlfKASD0Rrc)
+
 ## Quick Start
 
 [Installation and dataset guide](docs/Quick_Start.md)
