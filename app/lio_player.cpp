@@ -166,12 +166,8 @@ bool LoadIMUData(const std::string& csv_path, std::vector<IMUData>& imu_data) {
         
         if (values.size() == 7) {
             double timestamp = values[0];
-            Eigen::Vector3f gyr(static_cast<float>(values[1]),
-                               static_cast<float>(values[2]),
-                               static_cast<float>(values[3]));
-            Eigen::Vector3f acc(static_cast<float>(values[4]),
-                               static_cast<float>(values[5]),
-                               static_cast<float>(values[6]));
+            Eigen::Vector3d gyr(values[1], values[2], values[3]);
+            Eigen::Vector3d acc(values[4], values[5], values[6]);
             imu_data.emplace_back(timestamp, acc, gyr);
         }
         
@@ -239,7 +235,8 @@ bool LoadLiDARTimestamps(const std::string& timestamp_path, std::vector<LiDARDat
  */
 void CreateEventSequence(const std::vector<IMUData>& imu_data,
                         const std::vector<LiDARData>& lidar_data,
-                        std::vector<SensorEvent>& events) {
+                        std::vector<SensorEvent>& events,
+                        double lidar_scan_duration) {
     events.clear();
     
     // Create events for IMU data
@@ -255,7 +252,7 @@ void CreateEventSequence(const std::vector<IMUData>& imu_data,
     for (size_t i = 0; i < lidar_data.size(); ++i) {
         SensorEvent event;
         event.type = SensorType::LIDAR;
-        event.timestamp = lidar_data[i].timestamp;
+        event.timestamp = lidar_data[i].timestamp + lidar_scan_duration;
         event.data_index = i;
         events.push_back(event);
     }
@@ -397,7 +394,8 @@ int main(int argc, char** argv) {
     }
     
     // Create time-ordered event sequence
-    lio::CreateEventSequence(imu_data, lidar_data, events);
+    lio::CreateEventSequence(
+        imu_data, lidar_data, events, config.estimator.scan_duration);
     
     spdlog::info("");
     spdlog::info("Statistics:");
@@ -437,8 +435,10 @@ int main(int argc, char** argv) {
     
     // Configure estimator parameters from config
     estimator.m_params.voxel_size = config.estimator.voxel_size;
+    estimator.m_params.map_voxel_size = config.estimator.map_voxel_size;
     estimator.m_params.max_correspondences = config.estimator.max_correspondences;
     estimator.m_params.max_correspondence_distance = config.estimator.max_correspondence_distance;
+    estimator.m_params.lidar_noise_std = config.estimator.lidar_noise_std;
     estimator.m_params.max_iterations = config.estimator.max_iterations;
     estimator.m_params.convergence_threshold = config.estimator.convergence_threshold;
     estimator.m_params.enable_undistortion = config.estimator.enable_undistortion;
@@ -454,6 +454,10 @@ int main(int argc, char** argv) {
     estimator.m_params.scan_planarity_threshold = config.estimator.scan_planarity_threshold;
     estimator.m_params.map_planarity_threshold = config.estimator.map_planarity_threshold;
     estimator.m_params.point_to_surfel_threshold = config.estimator.point_to_surfel_threshold;
+    estimator.m_params.kdtree_knn = config.estimator.kdtree_knn;
+    estimator.m_params.kdtree_planarity_threshold = config.estimator.kdtree_planarity_threshold;
+    estimator.m_params.kdtree_max_plane_residual = config.estimator.kdtree_max_plane_residual;
+	estimator.m_params.map_recovery_frames = config.estimator.map_recovery_frames;
     estimator.m_params.min_surfel_inliers = config.estimator.min_surfel_inliers;
     estimator.m_params.min_linearity_ratio = config.estimator.min_linearity_ratio;
     estimator.m_params.stride = config.estimator.stride;
@@ -467,11 +471,11 @@ int main(int argc, char** argv) {
     estimator.m_params.acc_bias_noise_std = std::sqrt(config.imu.b_acc_cov);
     
     // Configure extrinsics from config
-    estimator.m_params.R_il = config.extrinsics.R_il.cast<float>();
-    estimator.m_params.t_il = config.extrinsics.t_il.cast<float>();
+    estimator.m_params.R_il = config.extrinsics.R_il;
+    estimator.m_params.t_il = config.extrinsics.t_il;
     
     // Configure gravity from config
-    estimator.m_params.gravity = config.imu.gravity.cast<float>();
+    estimator.m_params.gravity = config.imu.gravity;
     
     // Update process noise matrix with new IMU parameters
     estimator.UpdateProcessNoise();
@@ -611,7 +615,8 @@ int main(int argc, char** argv) {
             // Compute gravity-compensated acceleration (world frame)
             // Update IMU bias in viewer (only in GUI mode)
             if (!headless_mode) {
-                viewer.UpdateIMUBias(state.m_gyro_bias, state.m_acc_bias);
+                viewer.UpdateIMUBias(
+                    state.m_gyro_bias.cast<float>(), state.m_acc_bias.cast<float>());
             }
             
         } else {
@@ -632,7 +637,9 @@ int main(int argc, char** argv) {
                 auto frame_start = std::chrono::high_resolution_clock::now();
                 
                 // Process with LIO estimator
-                estimator.ProcessLidar(lio::LidarData(lidar.timestamp, cloud));
+                const double scan_end_time =
+                    lidar.timestamp + estimator.m_params.scan_duration;
+                estimator.ProcessLidar(lio::LidarData(scan_end_time, cloud));
                 
                 // Measure frame processing time
                 auto frame_end = std::chrono::high_resolution_clock::now();
@@ -643,12 +650,12 @@ int main(int argc, char** argv) {
                 lio::State current_state = estimator.GetCurrentState();
                 
                 // Store trajectory with timestamp
-                trajectory_with_timestamps.push_back({lidar.timestamp, current_state});
+                trajectory_with_timestamps.push_back({scan_end_time, current_state});
                 
                 // Convert state to pose matrix for visualization
                 Eigen::Matrix4f current_pose = Eigen::Matrix4f::Identity();
-                current_pose.block<3,3>(0,0) = current_state.m_rotation;
-                current_pose.block<3,1>(0,3) = current_state.m_position;
+                current_pose.block<3,3>(0,0) = current_state.m_rotation.cast<float>();
+                current_pose.block<3,1>(0,3) = current_state.m_position.cast<float>();
                 
                 // Get processed (downsampled + range filtered) cloud for visualization
                 lio::PointCloudPtr processed_cloud = estimator.GetProcessedCloud();
@@ -720,11 +727,11 @@ int main(int argc, char** argv) {
         // Write TUM format: timestamp x y z qx qy qz qw
         for (const auto& [timestamp, state] : trajectory_with_timestamps) {
             // Extract position and rotation
-            const Eigen::Vector3f& position = state.m_position;
-            const Eigen::Matrix3f& rotation = state.m_rotation;
+            const Eigen::Vector3d& position = state.m_position;
+            const Eigen::Matrix3d& rotation = state.m_rotation;
             
             // Convert rotation matrix to quaternion
-            Eigen::Quaternionf q(rotation);
+            Eigen::Quaterniond q(rotation);
             
             // Write to file
             traj_file << std::fixed << std::setprecision(6) << timestamp << " "
@@ -738,6 +745,22 @@ int main(int argc, char** argv) {
         spdlog::error("Failed to open trajectory file: {}", traj_output_path);
     }
     spdlog::info("");
+
+    const std::string bias_output_path = dataset_path + "/bias_trajectory.csv";
+    std::ofstream bias_file(bias_output_path);
+    if (bias_file.is_open()) {
+        bias_file << "timestamp,bgx,bgy,bgz,bax,bay,baz,gx,gy,gz\n";
+        bias_file << std::setprecision(12);
+        for (const auto& [timestamp, state] : trajectory_with_timestamps) {
+            bias_file << timestamp << ","
+                      << state.m_gyro_bias.x() << "," << state.m_gyro_bias.y() << ","
+                      << state.m_gyro_bias.z() << "," << state.m_acc_bias.x() << ","
+                      << state.m_acc_bias.y() << "," << state.m_acc_bias.z() << ","
+                      << state.m_gravity.x() << "," << state.m_gravity.y() << ","
+                      << state.m_gravity.z() << "\n";
+        }
+        spdlog::info("Bias trajectory saved to: {}", bias_output_path);
+    }
     
     // Save processing times to file
     std::string proc_time_output_path = dataset_path + "/ours_processing_time.txt";

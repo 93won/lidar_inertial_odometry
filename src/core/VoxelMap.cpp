@@ -15,6 +15,7 @@
 #include <cmath>
 #include <limits>
 #include <queue>
+#include <stdexcept>
 #include <spdlog/spdlog.h>
 
 namespace lio {
@@ -24,11 +25,14 @@ VoxelMap::VoxelMap(float voxel_size)
     , m_max_hit_count(10)
     , m_hierarchy_factor(3)  // Default: 3×3×3
 {
+    if (!std::isfinite(voxel_size) || voxel_size <= 0.0f) {
+        throw std::invalid_argument("Voxel size must be finite and positive");
+    }
 }
 
 void VoxelMap::SetVoxelSize(float size) {
-    if (size <= 0.0f) {
-        throw std::invalid_argument("Voxel size must be positive");
+    if (!std::isfinite(size) || size <= 0.0f) {
+        throw std::invalid_argument("Voxel size must be finite and positive");
     }
     
     // If size changed, need to rebuild the map
@@ -110,8 +114,17 @@ void VoxelMap::UnregisterFromParent(const VoxelKey& key_L0) {
     }
 }
 
-void VoxelMap::AddPoint(const Point3D& point) {
-    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+void VoxelMap::ErasePointIndex(const VoxelKey& key) {
+    const auto iterator = m_point_ids.find(key);
+    if (iterator == m_point_ids.end()) {
+        return;
+    }
+    m_point_index.Erase(iterator->second);
+    m_point_ids.erase(iterator);
+}
+
+void VoxelMap::AddPointUnlocked(
+    const Point3D& point, std::vector<SpatialIndex::Point>& additions) {
     // Get L0 voxel key for this point
     VoxelKey key = PointToVoxelKey(point, 0);
     
@@ -140,7 +153,17 @@ void VoxelMap::AddPoint(const Point3D& point) {
     // Register to hierarchy if newly occupied
     if (was_empty) {
         RegisterToParent(key);
+        const std::uint64_t id = m_next_point_id++;
+        m_point_ids[key] = id;
+        additions.push_back({id, point_vec});
     }
+}
+
+void VoxelMap::AddPoint(const Point3D& point) {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    std::vector<SpatialIndex::Point> additions;
+    AddPointUnlocked(point, additions);
+    m_point_index.Add(additions);
 }
 
 void VoxelMap::AddPointCloud(const PointCloudPtr& cloud) {
@@ -150,9 +173,12 @@ void VoxelMap::AddPointCloud(const PointCloudPtr& cloud) {
         return;
     }
 
+    std::vector<SpatialIndex::Point> additions;
+    additions.reserve(cloud->size());
     for (size_t i = 0; i < cloud->size(); ++i) {
-        AddPoint(cloud->at(i));
+        AddPointUnlocked(cloud->at(i), additions);
     }
+    m_point_index.Add(additions);
 }
 
 std::vector<VoxelKey> VoxelMap::GetNeighborVoxels(const VoxelKey& center, float search_distance) const {
@@ -183,6 +209,12 @@ void VoxelMap::Clear() {
     std::lock_guard<std::recursive_mutex> lock(m_mutex);
     m_voxels_L0.clear();
     m_voxels_L1.clear();
+    m_point_index.Clear();
+    m_point_ids.clear();
+    m_next_point_id = 1;
+    m_hit_voxels.clear();
+    m_map_center.setZero();
+    m_map_initialized = false;
 }
 
 void VoxelMap::UpdateVoxelMap(const PointCloudPtr& new_cloud,
@@ -252,6 +284,7 @@ void VoxelMap::UpdateVoxelMap(const PointCloudPtr& new_cloud,
         // Remove voxels outside the box
         for (const auto& key : voxels_to_remove) {
             UnregisterFromParent(key);
+            ErasePointIndex(key);
             m_voxels_L0.erase(key);
         }
         
@@ -294,7 +327,7 @@ void VoxelMap::UpdateVoxelMap(const PointCloudPtr& new_cloud,
             continue;
         }
 
-        // Skip if child count didn't change (incremental update)
+        // Keep a stable plane while the same leaf voxels remain occupied.
         if (node_L1.has_surfel && node_L1.last_child_count == current_child_count) {
             continue;
         }
@@ -336,13 +369,8 @@ void VoxelMap::UpdateVoxelMap(const PointCloudPtr& new_cloud,
         float planarity = singular_values(2) / (singular_values(0) + 1e-6f);
 
         if (planarity > m_planarity_threshold) {
-            // Not planar enough - remove L1 and its children
+            // Keep map points; query-time KNN plane fitting rejects non-planar neighborhoods.
             node_L1.has_surfel = false;
-            
-            for (const VoxelKey& key_L0 : node_L1.occupied_children) {
-                m_voxels_L0.erase(key_L0);
-            }
-            m_voxels_L1.erase(it_L1);
             continue;
         }
         
@@ -380,6 +408,7 @@ Eigen::Vector3f VoxelMap::VoxelKeyToCenter(const VoxelKey& key) const {
 }
 
 Eigen::Vector3f VoxelMap::GetVoxelCentroid(const VoxelKey& key) const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     auto it = m_voxels_L0.find(key);
     if (it == m_voxels_L0.end()) {
         // Voxel not found, return geometric center as fallback
@@ -391,6 +420,7 @@ Eigen::Vector3f VoxelMap::GetVoxelCentroid(const VoxelKey& key) const {
 }
 
 Point3D VoxelMap::GetCentroidPoint(const VoxelKey& key) const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     auto it = m_voxels_L0.find(key);
     if (it == m_voxels_L0.end()) {
         // Voxel not found, return geometric center as fallback
@@ -439,10 +469,12 @@ void VoxelMap::ClearHitMarkers() {
 }
 
 bool VoxelMap::IsVoxelHit(const VoxelKey& key) const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     return m_hit_voxels.find(key) != m_hit_voxels.end();
 }
 
 std::vector<VoxelKey> VoxelMap::GetHitVoxels() const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     std::vector<VoxelKey> hit_voxels;
     hit_voxels.reserve(m_hit_voxels.size());
     
@@ -473,6 +505,7 @@ bool VoxelMap::GetSurfelAtPoint(const Point3D& point,
                                  Eigen::Vector3f& normal,
                                  Eigen::Vector3f& centroid,
                                  float& planarity_score) const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     // Convert point to L1 voxel key
     VoxelKey key_L1 = PointToVoxelKey(point, 1);
     
@@ -495,6 +528,110 @@ bool VoxelMap::GetSurfelAtPoint(const Point3D& point,
     planarity_score = node.planarity_score;
     
     return true;
+}
+
+bool VoxelMap::GetClosestSurfel(const Point3D& point,
+                                float max_centroid_distance,
+                                float max_plane_distance,
+                                Eigen::Vector3f& normal,
+                                Eigen::Vector3f& centroid,
+                                float& planarity_score,
+                                MatchDiagnostics* diagnostics) const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    if (diagnostics) {
+        ++diagnostics->queries;
+    }
+    if (max_centroid_distance < 0.0f || max_plane_distance < 0.0f
+        || m_point_index.ValidSize() < 3) {
+        if (diagnostics) {
+            ++diagnostics->insufficient_map;
+        }
+        return false;
+    }
+    const Eigen::Vector3f query(point.x, point.y, point.z);
+
+    const std::size_t required_neighbors =
+        static_cast<std::size_t>(m_k_nearest_neighbors);
+    const auto neighbors = m_point_index.KNearest(query, required_neighbors);
+    if (neighbors.size() != required_neighbors) {
+        if (diagnostics) {
+            ++diagnostics->insufficient_neighbors;
+        }
+        return false;
+    }
+    if ((neighbors.front().position - query).norm() > max_centroid_distance) {
+        if (diagnostics) {
+            ++diagnostics->centroid_gate;
+        }
+        return false;
+    }
+
+    centroid.setZero();
+    for (const auto& neighbor : neighbors) {
+        centroid += neighbor.position;
+    }
+    centroid /= static_cast<float>(neighbors.size());
+
+    Eigen::Matrix3f covariance = Eigen::Matrix3f::Zero();
+    for (const auto& neighbor : neighbors) {
+        const Eigen::Vector3f offset = neighbor.position - centroid;
+        covariance.noalias() += offset * offset.transpose();
+    }
+    covariance /= static_cast<float>(neighbors.size());
+
+    Eigen::SelfAdjointEigenSolver<Eigen::Matrix3f> eigen_solver(covariance);
+    if (eigen_solver.info() != Eigen::Success) {
+        if (diagnostics) {
+            ++diagnostics->eigen_failure;
+        }
+        return false;
+    }
+    const Eigen::Vector3f eigenvalues = eigen_solver.eigenvalues().cwiseMax(0.0f);
+    if (!eigenvalues.allFinite() || eigenvalues.y() <= 1e-8f
+        || eigenvalues.y() / (eigenvalues.z() + 1e-10f) < m_min_linearity_ratio) {
+        if (diagnostics) {
+            ++diagnostics->degenerate_neighbors;
+        }
+        return false;
+    }
+    const float planarity = 1.0f - eigenvalues.x() / (eigenvalues.y() + 1e-10f);
+    if (planarity < m_knn_planarity_threshold) {
+        if (diagnostics) {
+            ++diagnostics->planarity_gate;
+        }
+        return false;
+    }
+
+    normal = eigen_solver.eigenvectors().col(0);
+    if (normal.dot(query - centroid) < 0.0f) {
+        normal = -normal;
+    }
+    for (const auto& neighbor : neighbors) {
+        if (std::abs(normal.dot(neighbor.position - centroid))
+            > m_point_to_surfel_threshold) {
+            if (diagnostics) {
+                ++diagnostics->neighbor_plane_gate;
+            }
+            return false;
+        }
+    }
+    if (std::abs(normal.dot(query - centroid)) > max_plane_distance) {
+        if (diagnostics) {
+            ++diagnostics->query_plane_gate;
+        }
+        return false;
+    }
+
+    planarity_score = planarity;
+    if (diagnostics) {
+        ++diagnostics->accepted;
+    }
+    return true;
+}
+
+SpatialIndex::Statistics VoxelMap::GetPointIndexStatistics() const {
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
+    return m_point_index.GetStatistics();
 }
 
 } // namespace lio

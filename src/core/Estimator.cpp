@@ -13,11 +13,15 @@
 #include "Estimator.h"
 #include "LieUtils.h"
 #include "PointCloudUtils.h"
+
 #include <spdlog/spdlog.h>
+#include <unsupported/Eigen/MatrixFunctions>
+
+#include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <numeric>
-#include <algorithm>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -30,46 +34,11 @@ namespace lio {
 // ============================================================================
 
 Estimator::Estimator()
-    : m_current_state()
-    , m_initialized(false)
-    , m_last_update_time(0.0)
-    , m_frame_count(0)
-    , m_first_lidar_frame(true)
-    , m_last_lidar_time(0.0)
-    , m_first_keyframe(true)
-    , m_last_keyframe_position(Eigen::Vector3f::Zero())
-    , m_last_keyframe_rotation(Eigen::Matrix3f::Identity())
 {
-    // Initialize extrinsics with default R3LIVE/Avia values
-    m_params.R_il = Eigen::Matrix3f::Identity();
-    m_params.t_il = Eigen::Vector3f(0.04165f, 0.02326f, -0.0284f);
-    
-    // Initialize process noise matrix (Q)
-    m_process_noise = Eigen::Matrix<float, 18, 18>::Identity();
-    m_process_noise.block<3,3>(0,0) *= m_params.gyr_noise_std * m_params.gyr_noise_std;
-    m_process_noise.block<3,3>(3,3) *= m_params.acc_noise_std * m_params.acc_noise_std;
-    m_process_noise.block<3,3>(6,6) *= m_params.acc_noise_std * m_params.acc_noise_std;
-    m_process_noise.block<3,3>(9,9) *= m_params.gyr_bias_noise_std * m_params.gyr_bias_noise_std;
-    m_process_noise.block<3,3>(12,12) *= m_params.acc_bias_noise_std * m_params.acc_bias_noise_std;
-    m_process_noise.block<3,3>(15,15) *= m_params.gravity_noise_std * m_params.gravity_noise_std;
-    
-    // Initialize state transition matrix
-    m_state_transition = Eigen::Matrix<float, 18, 18>::Identity();
-    
-    // Initialize local map
+	m_params.t_il = {0.04165, 0.02326, -0.0284};
     m_map_cloud = std::make_shared<PointCloud>();
     m_processed_cloud = std::make_shared<PointCloud>();
-    
-    // Initialize statistics
-    m_statistics = Statistics();
-    m_statistics.total_frames = 0;
-    m_statistics.successful_registrations = 0;
-    m_statistics.avg_processing_time_ms = 0.0;
-    m_statistics.total_distance = 0.0;
-    m_statistics.avg_translation_error = 0.0;
-    m_statistics.avg_rotation_error = 0.0;
-    
-    // Initialize Probabilistic Kernel Optimizer
+
     PKOConfig pko_config;
     pko_config.use_adaptive = true;
     pko_config.min_scale_factor = 0.001;
@@ -79,11 +48,6 @@ Estimator::Estimator()
     pko_config.gmm_components = 2;
     pko_config.gmm_sample_size = 100;
     m_pko = std::make_shared<ProbabilisticKernelOptimizer>(pko_config);
-    
-    spdlog::info("[Estimator] Initialized with default extrinsics (R3LIVE/Avia dataset)");
-    spdlog::info("[Estimator] t_il = [{:.5f}, {:.5f}, {:.5f}]", 
-                 m_params.t_il.x(), m_params.t_il.y(), m_params.t_il.z());
-    spdlog::info("[Estimator] R_il = Identity");
 }
 
 Estimator::~Estimator() {
@@ -93,16 +57,7 @@ Estimator::~Estimator() {
 }
 
 void Estimator::UpdateProcessNoise() {
-    // Update process noise matrix (Q) with current parameters
-    m_process_noise = Eigen::Matrix<float, 18, 18>::Identity();
-    m_process_noise.block<3,3>(0,0) *= m_params.gyr_noise_std * m_params.gyr_noise_std;
-    m_process_noise.block<3,3>(3,3) *= m_params.acc_noise_std * m_params.acc_noise_std;
-    m_process_noise.block<3,3>(6,6) *= m_params.acc_noise_std * m_params.acc_noise_std;
-    m_process_noise.block<3,3>(9,9) *= m_params.gyr_bias_noise_std * m_params.gyr_bias_noise_std;
-    m_process_noise.block<3,3>(12,12) *= m_params.acc_bias_noise_std * m_params.acc_bias_noise_std;
-    m_process_noise.block<3,3>(15,15) *= m_params.gravity_noise_std * m_params.gravity_noise_std;
-    
-    spdlog::debug("[Estimator] Process noise matrix updated with current IMU parameters");
+	m_process_noise.setZero();
 }
 
 // ============================================================================
@@ -127,26 +82,26 @@ bool Estimator::GravityInitialization(const std::vector<IMUData>& imu_buffer) {
     spdlog::info("[Estimator] Starting gravity initialization with {} IMU samples", imu_buffer.size());
     
     // 2. Compute mean acceleration and gyroscope (running average)
-    Eigen::Vector3f mean_acc = Eigen::Vector3f::Zero();
-    Eigen::Vector3f mean_gyr = Eigen::Vector3f::Zero();
+    Eigen::Vector3d mean_acc = Eigen::Vector3d::Zero();
+    Eigen::Vector3d mean_gyr = Eigen::Vector3d::Zero();
     
     for (const auto& imu : imu_buffer) {
         mean_acc += imu.acc;
         mean_gyr += imu.gyr;
     }
-    mean_acc /= static_cast<float>(imu_buffer.size());
-    mean_gyr /= static_cast<float>(imu_buffer.size());
+    mean_acc /= static_cast<double>(imu_buffer.size());
+    mean_gyr /= static_cast<double>(imu_buffer.size());
     
     // 3. Compute variance to check if robot is stationary
-    float acc_variance = 0.0f;
-    float gyr_variance = 0.0f;
+    double acc_variance = 0.0;
+    double gyr_variance = 0.0;
     
     for (const auto& imu : imu_buffer) {
         acc_variance += (imu.acc - mean_acc).squaredNorm();
         gyr_variance += (imu.gyr - mean_gyr).squaredNorm();
     }
-    acc_variance /= static_cast<float>(imu_buffer.size());
-    gyr_variance /= static_cast<float>(imu_buffer.size());
+    acc_variance /= static_cast<double>(imu_buffer.size());
+    gyr_variance /= static_cast<double>(imu_buffer.size());
     
     // 4. Check if robot is stationary (low variance)
     if (acc_variance > 0.5f) {
@@ -162,8 +117,8 @@ bool Estimator::GravityInitialization(const std::vector<IMUData>& imu_buffer) {
     m_current_state.Reset();
     
     // 6. Check accelerometer norm (should be ~g if stationary)
-    float acc_norm = mean_acc.norm();
-    float gravity_magnitude = m_params.gravity.norm();
+    const double acc_norm = mean_acc.norm();
+    const double gravity_magnitude = m_params.gravity.norm();
     
     if (std::abs(acc_norm - gravity_magnitude) > 1.5f) {
         spdlog::error("[Estimator] Accelerometer norm = {:.3f} m/s² (expected ~{:.3f})", acc_norm, gravity_magnitude);
@@ -172,25 +127,25 @@ bool Estimator::GravityInitialization(const std::vector<IMUData>& imu_buffer) {
     }
     
     // 7. Initialize gravity vector (measured acceleration = -gravity in sensor frame)
-    Eigen::Vector3f gravity_measured = -mean_acc.normalized() * gravity_magnitude;
+    Eigen::Vector3d gravity_measured = -mean_acc.normalized() * gravity_magnitude;
     
     // 8. Set initial gravity (not yet aligned)
     m_current_state.m_gravity = gravity_measured;
     
     // 9. Initialize rotation to identity (will be aligned after)
-    m_current_state.m_rotation = Eigen::Matrix3f::Identity();
+    m_current_state.m_rotation = Eigen::Matrix3d::Identity();
     
     spdlog::info("[Estimator] Initial gravity (sensor frame): [{:.3f}, {:.3f}, {:.3f}]", 
                  gravity_measured.x(), gravity_measured.y(), gravity_measured.z());
     
     // 10. Gravity alignment: align world frame so gravity points to configured gravity direction
     // This rotates all states to make gravity vertical
-    Eigen::Vector3f gravity_target = m_params.gravity;
-    Eigen::Quaternionf q_align = Eigen::Quaternionf::FromTwoVectors(
+    Eigen::Vector3d gravity_target = m_params.gravity;
+    Eigen::Quaterniond q_align = Eigen::Quaterniond::FromTwoVectors(
         m_current_state.m_gravity.normalized(),
         gravity_target.normalized()
     );
-    Eigen::Matrix3f R_align = q_align.toRotationMatrix();
+    Eigen::Matrix3d R_align = q_align.toRotationMatrix();
     
    
     
@@ -209,10 +164,10 @@ bool Estimator::GravityInitialization(const std::vector<IMUData>& imu_buffer) {
     // After gravity alignment: mean_acc ≈ -R_align^T * g_world + bias
     // Therefore: bias = mean_acc + R_align^T * g_world
     //                 = mean_acc + R_align^T * configured_gravity
-    Eigen::Vector3f g_aligned = m_params.gravity;
+    Eigen::Vector3d g_aligned = m_params.gravity;
 
     // Correct formula: bias = mean_acc + R^T * g
-    Eigen::Vector3f acc_bias_estimate = mean_acc + m_current_state.m_rotation.transpose() * g_aligned;
+    Eigen::Vector3d acc_bias_estimate = mean_acc + m_current_state.m_rotation.transpose() * g_aligned;
     m_current_state.m_acc_bias = acc_bias_estimate;
     
     // 13. Initialize position and velocity to zero
@@ -220,16 +175,19 @@ bool Estimator::GravityInitialization(const std::vector<IMUData>& imu_buffer) {
     m_current_state.m_velocity.setZero();
     
     // 14. Initialize covariance with appropriate uncertainty
-    m_current_state.m_covariance = Eigen::Matrix<float, 18, 18>::Identity();
+    m_current_state.m_covariance = State::Covariance::Identity();
     m_current_state.m_covariance.block<3,3>(0,0) *= 0.01f;   // rotation (small, well aligned)
     m_current_state.m_covariance.block<3,3>(3,3) *= 1.0f;    // position (unknown)
     m_current_state.m_covariance.block<3,3>(6,6) *= 0.1f;    // velocity (should be zero)
     m_current_state.m_covariance.block<3,3>(9,9) *= 0.001f;  // gyro bias (estimated from data)
-    m_current_state.m_covariance.block<3,3>(12,12) *= 0.01f; // acc bias (estimated from data)
-    m_current_state.m_covariance.block<3,3>(15,15) *= 0.001f; // gravity (well aligned)
+    m_current_state.m_covariance.block<3,3>(12,12) *= 0.01; // acc bias (estimated from data)
+    m_current_state.m_covariance.block<2,2>(15,15) *= 0.001; // gravity direction
     
     // 15. Set timestamp
     m_last_update_time = imu_buffer.back().timestamp;
+    m_previous_imu = imu_buffer.back();
+    m_has_previous_imu = true;
+    m_state_history.emplace_back(m_current_state, m_last_update_time);
     
     // 16. Mark as initialized
     m_initialized = true;
@@ -261,21 +219,21 @@ void Estimator::Initialize(const IMUData& first_imu) {
     m_current_state.Reset();
     
     // Initial gravity alignment (assume stationary)
-    Eigen::Vector3f acc_world = first_imu.acc;
-    float acc_norm = acc_world.norm();
-    float gravity_magnitude = m_params.gravity.norm();
+    Eigen::Vector3d acc_world = first_imu.acc;
+    const double acc_norm = acc_world.norm();
+    const double gravity_magnitude = m_params.gravity.norm();
     
     if (std::abs(acc_norm - gravity_magnitude) < 1.0f) {
         // Use accelerometer to initialize gravity direction
         m_current_state.m_gravity = -acc_world.normalized() * gravity_magnitude;
         
         // Gravity alignment: rotate world frame so gravity points to configured gravity
-        Eigen::Vector3f gravity_target = m_params.gravity;
-        Eigen::Quaternionf q_align = Eigen::Quaternionf::FromTwoVectors(
+        Eigen::Vector3d gravity_target = m_params.gravity;
+        Eigen::Quaterniond q_align = Eigen::Quaterniond::FromTwoVectors(
             m_current_state.m_gravity.normalized(),
             gravity_target.normalized()
         );
-        Eigen::Matrix3f R_align = q_align.toRotationMatrix();
+        Eigen::Matrix3d R_align = q_align.toRotationMatrix();
         
         // Apply alignment to initial rotation
         m_current_state.m_rotation = R_align;
@@ -288,7 +246,7 @@ void Estimator::Initialize(const IMUData& first_imu) {
     } else {
         spdlog::warn("[Estimator] Accelerometer norm = {:.3f} (expected ~{:.3f}). Using default gravity.", acc_norm, gravity_magnitude);
         m_current_state.m_gravity = m_params.gravity;
-        m_current_state.m_rotation = Eigen::Matrix3f::Identity();
+        m_current_state.m_rotation = Eigen::Matrix3d::Identity();
     }
     
     // Initialize biases to zero (will be estimated)
@@ -300,15 +258,18 @@ void Estimator::Initialize(const IMUData& first_imu) {
     m_current_state.m_velocity.setZero();
     
     // Initialize covariance with large uncertainty
-    m_current_state.m_covariance = Eigen::Matrix<float, 18, 18>::Identity();
+    m_current_state.m_covariance = State::Covariance::Identity();
     m_current_state.m_covariance.block<3,3>(0,0) *= 0.1f;    // rotation
     m_current_state.m_covariance.block<3,3>(3,3) *= 1.0f;    // position
     m_current_state.m_covariance.block<3,3>(6,6) *= 0.5f;    // velocity
     m_current_state.m_covariance.block<3,3>(9,9) *= 0.01f;   // gyro bias
     m_current_state.m_covariance.block<3,3>(12,12) *= 0.1f;  // acc bias
-    m_current_state.m_covariance.block<3,3>(15,15) *= 0.01f; // gravity
+    m_current_state.m_covariance.block<2,2>(15,15) *= 0.01;
     
     m_last_update_time = first_imu.timestamp;
+    m_previous_imu = first_imu;
+    m_has_previous_imu = true;
+    m_state_history.emplace_back(m_current_state, m_last_update_time);
     
     m_initialized = true;
     spdlog::info("[Estimator] Initialization complete at t={:.6f}", first_imu.timestamp);
@@ -326,95 +287,144 @@ void Estimator::ProcessIMU(const IMUData& imu_data) {
         return;
     }
     
-    // Propagate state using current IMU measurement
     PropagateState(imu_data);
-    
-    // Save state history for undistortion between LiDAR frames
-    StateWithTimestamp state_snapshot;
-    state_snapshot.state = m_current_state;
-    state_snapshot.timestamp = imu_data.timestamp;
-    m_state_history.push_back(state_snapshot);
+    m_state_history.emplace_back(m_current_state, imu_data.timestamp);
+    const double oldest_needed = imu_data.timestamp - 2.0 * m_params.scan_duration;
+    while (m_state_history.size() > 2 && m_state_history[1].timestamp < oldest_needed) {
+        m_state_history.pop_front();
+    }
 }
 
 void Estimator::PropagateState(const IMUData& imu) {
-    // Time step (only timestamp is double)
-    double dt = imu.timestamp - m_last_update_time;
-
+    const double dt = imu.timestamp - m_last_update_time;
     m_last_update_time = imu.timestamp;
-
     if (dt <= 0.0 || dt > 1.0) {
+        m_previous_imu = imu;
+        m_has_previous_imu = true;
         return;
     }
-    float dt_f = static_cast<float>(dt);
-    
-    // Get current state (all float)
-    Eigen::Matrix3f R = m_current_state.m_rotation;
-    Eigen::Vector3f p = m_current_state.m_position;
-    Eigen::Vector3f v = m_current_state.m_velocity;
-    Eigen::Vector3f bg = m_current_state.m_gyro_bias;
-    Eigen::Vector3f ba = m_current_state.m_acc_bias;
-    Eigen::Vector3f g = m_current_state.m_gravity;
-    
-    // Corrected measurements (already float from IMUData)
-    Eigen::Vector3f omega = imu.gyr - bg;  // angular velocity
-    Eigen::Vector3f acc = imu.acc - ba;    // linear acceleration
 
-    Eigen::Vector3f acc_world = R * acc + g;
-    
-    // --- Forward Propagation (Euler integration) ---
-    // dR/dt = R * [omega]_x  =>  R(t+dt) = R(t) * Exp(omega * dt)
-    Eigen::Vector3f omega_dt = omega * dt_f;
-    Eigen::Matrix3f R_delta = SO3::Exp(omega_dt).Matrix();
-    Eigen::Matrix3f R_new = R * R_delta;
-    
-    // dv/dt = R * acc + g  =>  v(t+dt) = v(t) + (R * acc + g) * dt
-    Eigen::Vector3f v_new = v + (R * acc + g) * dt_f;
-    
-    // dp/dt = v  =>  p(t+dt) = p(t) + v * dt + 0.5 * (R * acc + g) * dt²
-    Eigen::Vector3f p_new = p + v * dt_f + 0.5f * (R * acc + g) * dt_f * dt_f;
-    
-    // Biases: random walk (no change in mean)
-    Eigen::Vector3f bg_new = bg;
-    Eigen::Vector3f ba_new = ba;
-    Eigen::Vector3f g_new = g;
-    
-    // --- Covariance Propagation ---
-    // P(t+dt) = F * P(t) * F^T + Q * dt
-    UpdateProcessNoise(dt);
-    
-    // Build state transition matrix F (18x18)
-    // Simplified linearization around current state
+    const IMUData& previous = m_has_previous_imu ? m_previous_imu : imu;
+    const Eigen::Vector3d omega = 0.5 * (previous.gyr + imu.gyr) - m_current_state.m_gyro_bias;
+    const Eigen::Vector3d acceleration = 0.5 * (previous.acc + imu.acc) - m_current_state.m_acc_bias;
+    const Eigen::Matrix3d rotation = m_current_state.m_rotation;
+    const Eigen::Matrix3d rotation_mid = rotation * SO3::Exp(0.5 * omega * dt).Matrix();
+    const Eigen::Vector3d acceleration_world = rotation_mid * acceleration + m_current_state.m_gravity;
+
+    BuildDiscreteImuModel(omega, acceleration, rotation_mid, dt);
+    m_current_state.m_covariance = m_state_transition * m_current_state.m_covariance
+        * m_state_transition.transpose() + m_process_noise;
+    StabilizeCovariance(m_current_state.m_covariance);
+
+    m_current_state.m_position += m_current_state.m_velocity * dt
+        + 0.5 * acceleration_world * dt * dt;
+    m_current_state.m_velocity += acceleration_world * dt;
+    m_current_state.m_rotation = rotation * SO3::Exp(omega * dt).Matrix();
+    m_current_state.m_gravity = m_current_state.m_gravity.normalized() * m_params.gravity.norm();
+    m_previous_imu = imu;
+    m_has_previous_imu = true;
+}
+
+void Estimator::BuildDiscreteImuModel(const Eigen::Vector3d& omega,
+                                      const Eigen::Vector3d& acceleration,
+                                      const Eigen::Matrix3d& rotation_mid,
+                                      double dt) {
+    const double dt2 = dt * dt;
+    const Eigen::Vector3d rotation_increment = omega * dt;
+    const Eigen::Vector3d half_rotation_increment = 0.5 * rotation_increment;
+    const auto right_jacobian = [](const Eigen::Vector3d& rotation_vector) {
+        const double angle = rotation_vector.norm();
+        const Eigen::Matrix3d skew = Hat(rotation_vector);
+        Eigen::Matrix3d result = Eigen::Matrix3d::Identity();
+        if (angle < 1e-10) {
+            result -= 0.5 * skew - skew * skew / 6.0;
+        } else {
+            result -= (1.0 - std::cos(angle)) / (angle * angle) * skew;
+            result += (angle - std::sin(angle)) / (angle * angle * angle) * skew * skew;
+        }
+        return result;
+    };
+
+    const Eigen::Matrix<double, 3, 2> gravity_basis =
+        State::GravityTangentBasis(m_current_state.m_gravity);
+    const Eigen::Matrix3d half_rotation = SO3::Exp(half_rotation_increment).Matrix();
+    const Eigen::Matrix3d acceleration_rotation_jacobian =
+        -rotation_mid * Hat(acceleration) * half_rotation.transpose();
+    const Eigen::Matrix3d acceleration_gyro_bias_jacobian =
+        0.5 * rotation_mid * Hat(acceleration)
+        * right_jacobian(half_rotation_increment) * dt;
+
     m_state_transition.setIdentity();
-    
-    // dR depends on omega (rotation dynamics)
-    Eigen::Matrix3f omega_skew = Hat(omega);
-    m_state_transition.block<3,3>(0,0) = Eigen::Matrix3f::Identity() - omega_skew * dt_f;
-    m_state_transition.block<3,3>(0,9) = -R * dt_f;  // rotation vs gyro bias
-    
-    // dv depends on R and acc (velocity dynamics)
-    Eigen::Matrix3f acc_skew = Hat(acc);
-    m_state_transition.block<3,3>(6,0) = -R * acc_skew * dt_f;  // velocity vs rotation
-    m_state_transition.block<3,3>(6,6) = Eigen::Matrix3f::Identity();
-    m_state_transition.block<3,3>(6,12) = -R * dt_f;  // velocity vs acc bias
-    m_state_transition.block<3,3>(6,15) = Eigen::Matrix3f::Identity() * dt_f;  // velocity vs gravity
-    
-    // dp depends on v (position dynamics)
-    m_state_transition.block<3,3>(3,3) = Eigen::Matrix3f::Identity();
-    m_state_transition.block<3,3>(3,6) = Eigen::Matrix3f::Identity() * dt_f;  // position vs velocity
-    
-    // Propagate covariance
-    Eigen::Matrix<float, 18, 18> P = m_current_state.m_covariance;
-    m_current_state.m_covariance = m_state_transition * P * m_state_transition.transpose() 
-                                   + m_process_noise * dt_f;
-    
-    // Update state
-    m_current_state.m_rotation = R_new;
-    m_current_state.m_position = p_new;
-    m_current_state.m_velocity = v_new;
-    m_current_state.m_gyro_bias = bg_new;
-    m_current_state.m_acc_bias = ba_new;
-    m_current_state.m_gravity = g_new;
-    
+    m_state_transition.block<3, 3>(0, 0) = SO3::Exp(-rotation_increment).Matrix();
+    m_state_transition.block<3, 3>(0, 9) = -right_jacobian(rotation_increment) * dt;
+    m_state_transition.block<3, 3>(3, 0) = 0.5 * acceleration_rotation_jacobian * dt2;
+    m_state_transition.block<3, 3>(3, 6) = Eigen::Matrix3d::Identity() * dt;
+    m_state_transition.block<3, 3>(3, 9) = 0.5 * acceleration_gyro_bias_jacobian * dt2;
+    m_state_transition.block<3, 3>(3, 12) = -0.5 * rotation_mid * dt2;
+    m_state_transition.block<3, 2>(3, 15) = 0.5 * gravity_basis * dt2;
+    m_state_transition.block<3, 3>(6, 0) = acceleration_rotation_jacobian * dt;
+    m_state_transition.block<3, 3>(6, 9) = acceleration_gyro_bias_jacobian * dt;
+    m_state_transition.block<3, 3>(6, 12) = -rotation_mid * dt;
+    m_state_transition.block<3, 2>(6, 15) = gravity_basis * dt;
+
+    m_noise_jacobian.setZero();
+    m_noise_jacobian.block<3, 3>(0, 0) = -Eigen::Matrix3d::Identity();
+    m_noise_jacobian.block<3, 3>(6, 3) = -rotation_mid;
+    m_noise_jacobian.block<3, 3>(9, 6) = Eigen::Matrix3d::Identity();
+    m_noise_jacobian.block<3, 3>(12, 9) = Eigen::Matrix3d::Identity();
+
+    const double gyro_variance = m_params.gyr_noise_std * m_params.gyr_noise_std;
+    const double acc_variance = m_params.acc_noise_std * m_params.acc_noise_std;
+    const double gyro_bias_variance =
+        m_params.gyr_bias_noise_std * m_params.gyr_bias_noise_std;
+    const double acc_bias_variance =
+        m_params.acc_bias_noise_std * m_params.acc_bias_noise_std;
+
+    State::Covariance continuous_dynamics = State::Covariance::Zero();
+    continuous_dynamics.block<3, 3>(0, 0) = -Hat(omega);
+    continuous_dynamics.block<3, 3>(0, 9) = -Eigen::Matrix3d::Identity();
+    continuous_dynamics.block<3, 3>(3, 6) = Eigen::Matrix3d::Identity();
+    continuous_dynamics.block<3, 3>(6, 0) = -rotation_mid * Hat(acceleration);
+    continuous_dynamics.block<3, 3>(6, 12) = -rotation_mid;
+    continuous_dynamics.block<3, 2>(6, 15) = gravity_basis;
+
+    Eigen::Matrix<double, 12, 12> continuous_noise =
+        Eigen::Matrix<double, 12, 12>::Zero();
+    continuous_noise.block<3, 3>(0, 0) = Eigen::Matrix3d::Identity() * gyro_variance;
+    continuous_noise.block<3, 3>(3, 3) = Eigen::Matrix3d::Identity() * acc_variance;
+    continuous_noise.block<3, 3>(6, 6) = Eigen::Matrix3d::Identity() * gyro_bias_variance;
+    continuous_noise.block<3, 3>(9, 9) = Eigen::Matrix3d::Identity() * acc_bias_variance;
+    const State::Covariance covariance_rate =
+        m_noise_jacobian * continuous_noise * m_noise_jacobian.transpose();
+
+    static constexpr int AUGMENTED_STATE_DIM = 2 * State::kStateDim;
+    Eigen::MatrixXd van_loan = Eigen::MatrixXd::Zero(AUGMENTED_STATE_DIM, AUGMENTED_STATE_DIM);
+    van_loan.block<State::kStateDim, State::kStateDim>(0, 0) = continuous_dynamics;
+    van_loan.block<State::kStateDim, State::kStateDim>(0, State::kStateDim) = covariance_rate;
+    van_loan.block<State::kStateDim, State::kStateDim>(State::kStateDim, State::kStateDim) =
+        -continuous_dynamics.transpose();
+    const Eigen::MatrixXd exponential = (van_loan * dt).exp();
+    const State::Covariance van_loan_transition =
+        exponential.block<State::kStateDim, State::kStateDim>(0, 0);
+    m_process_noise = exponential.block<State::kStateDim, State::kStateDim>(
+        0, State::kStateDim) * van_loan_transition.transpose();
+    m_process_noise = 0.5 * (m_process_noise + m_process_noise.transpose());
+}
+
+void Estimator::StabilizeCovariance(State::Covariance& covariance) {
+    covariance = 0.5 * (covariance + covariance.transpose());
+    Eigen::LLT<State::Covariance> cholesky(covariance);
+    if (cholesky.info() == Eigen::Success) {
+        return;
+    }
+    Eigen::SelfAdjointEigenSolver<State::Covariance> solver(covariance);
+    if (solver.info() != Eigen::Success) {
+        covariance += State::Covariance::Identity() * 1e-9;
+        return;
+    }
+    Eigen::Matrix<double, State::kStateDim, 1> eigenvalues =
+        solver.eigenvalues().cwiseMax(1e-12);
+    covariance = solver.eigenvectors() * eigenvalues.asDiagonal() * solver.eigenvectors().transpose();
 }
 
 // ============================================================================
@@ -432,18 +442,21 @@ void Estimator::ProcessLidar(const LidarData& lidar) {
     std::lock_guard<std::mutex> lock_state(m_state_mutex);
     std::lock_guard<std::mutex> lock_map(m_map_mutex);
     
-    // === 1. Preprocessing: Downsampling + Undistortion + Range filtering ===
     auto preprocess_start = std::chrono::high_resolution_clock::now();
-    
-    // Stride-based downsampling (if stride > 1)
+
+    const size_t raw_scan_size = lidar.cloud ? lidar.cloud->size() : 0;
+    PointCloudPtr undistorted_cloud = lidar.cloud;
+    if (m_params.enable_undistortion) {
+        undistorted_cloud = UndistortPointCloud(
+            lidar.cloud, lidar.timestamp - m_params.scan_duration, lidar.timestamp);
+    }
+    m_state_history.clear();  // Never mix pre-update and post-update states during deskew.
+
     PointCloudPtr downsampled_scan;
+    size_t stride_scan_size = undistorted_cloud ? undistorted_cloud->size() : 0;
     if (m_params.stride > 1) {
-        downsampled_scan = StrideDownsample(
-            lidar.cloud,
-            m_params.stride
-        );
-        
-        // Optionally apply voxel downsample after stride
+        downsampled_scan = StrideDownsample(undistorted_cloud, m_params.stride);
+        stride_scan_size = downsampled_scan->size();
         if (m_params.stride_then_voxel) {
             PointCloudPtr voxel_filtered = std::make_shared<PointCloud>();
             VoxelGrid scan_filter;
@@ -455,36 +468,23 @@ void Estimator::ProcessLidar(const LidarData& lidar) {
             downsampled_scan = voxel_filtered;
         }
     } else {
-        // Fallback to voxel-based downsampling only
         downsampled_scan = std::make_shared<PointCloud>();
         VoxelGrid scan_filter;
-        scan_filter.SetInputCloud(lidar.cloud);
+        scan_filter.SetInputCloud(undistorted_cloud);
         scan_filter.SetLeafSize(static_cast<float>(m_params.voxel_size));
         scan_filter.SetPlanarityFilter(true);
         scan_filter.SetHierarchyFactor(m_params.voxel_hierarchy_factor);
         scan_filter.Filter(*downsampled_scan);
     }
 
-    PointCloudPtr undistorted_cloud = downsampled_scan;
-    if (m_params.enable_undistortion) {
-        double scan_start_time = m_first_lidar_frame ? lidar.timestamp - 0.1 : m_last_lidar_time;
-        undistorted_cloud = UndistortPointCloud(
-            downsampled_scan,
-            scan_start_time,
-            lidar.timestamp
-        );
-    }
-    
-    m_state_history.clear();
-
     PointCloudPtr range_filtered_scan = std::make_shared<PointCloud>();
-    unsigned int initial_size = undistorted_cloud->size();
+    const size_t initial_size = downsampled_scan->size();
     const float min_range = static_cast<float>(m_params.min_range);
     const float max_range = static_cast<float>(m_params.max_map_distance);
     
-    for(unsigned int i = 0; i < initial_size; ++i) {
-        const auto& point = undistorted_cloud->at(i);
-        float range = std::sqrt(point.x * point.x + point.y * point.y + point.z * point.z);
+    for (size_t i = 0; i < initial_size; ++i) {
+        const auto& point = downsampled_scan->at(i);
+        const float range = std::sqrt(point.x * point.x + point.y * point.y + point.z * point.z);
         if (range >= min_range && range <= max_range) {
             range_filtered_scan->push_back(point);
         }
@@ -495,6 +495,12 @@ void Estimator::ProcessLidar(const LidarData& lidar) {
     
     LidarData downsampled_lidar(lidar.timestamp, range_filtered_scan);
     m_processed_cloud = range_filtered_scan;
+    if (std::getenv("LIO_DIAGNOSTICS") != nullptr) {
+        spdlog::info(
+            "[PreprocessDiag] frame={} raw={} undistorted={} stride={} voxel={} range={}",
+            m_frame_count, raw_scan_size, undistorted_cloud->size(), stride_scan_size,
+            downsampled_scan->size(), range_filtered_scan->size());
+    }
     
     // First frame: initialize map with downsampled cloud
     if (m_first_lidar_frame) {
@@ -509,13 +515,16 @@ void Estimator::ProcessLidar(const LidarData& lidar) {
     
     // === 2. IEKF Update ===
     auto iekf_start = std::chrono::high_resolution_clock::now();
-    UpdateWithLidar(downsampled_lidar);
+    const bool registered = UpdateWithLidar(downsampled_lidar);
     auto iekf_end = std::chrono::high_resolution_clock::now();
     double iekf_time = std::chrono::duration<double, std::milli>(iekf_end - iekf_start).count();
     
     // === 3. Map Update ===
     auto map_start = std::chrono::high_resolution_clock::now();
-    UpdateLocalMap(range_filtered_scan);
+    if (ShouldUpdateMap(registered)
+        || std::getenv("LIO_DIAGNOSTIC_UPDATE_MAP_ON_FAILURE") != nullptr) {
+        UpdateLocalMap(range_filtered_scan);
+    }
     auto map_end = std::chrono::high_resolution_clock::now();
     double map_time = std::chrono::duration<double, std::milli>(map_end - map_start).count();
     
@@ -532,6 +541,7 @@ void Estimator::ProcessLidar(const LidarData& lidar) {
         m_sum_map_time += map_time;
         m_processing_times.push_back(processing_time);
         m_statistics.total_frames++;
+        m_statistics.successful_registrations += registered ? 1 : 0;
         m_statistics.avg_processing_time_ms = 
             (m_statistics.avg_processing_time_ms * (m_statistics.total_frames - 1) + processing_time) 
             / m_statistics.total_frames;
@@ -546,6 +556,7 @@ void Estimator::ProcessLidar(const LidarData& lidar) {
     // Update tracking
     m_last_lidar_time = lidar.timestamp;
     m_last_lidar_state = m_current_state;
+    m_state_history.emplace_back(m_current_state, lidar.timestamp);
     m_frame_count++;
     
     // Log detailed timing every 100 frames
@@ -555,8 +566,9 @@ void Estimator::ProcessLidar(const LidarData& lidar) {
         double avg_map = m_sum_map_time / 100.0;
         double avg_total = avg_preprocess + avg_iekf + avg_map;
         
-        spdlog::info("[Estimator] Frame {}: Total={:.2f}ms (Preprocess={:.2f}ms, IEKF={:.2f}ms, Map={:.2f}ms)", 
-                     m_frame_count, avg_total, avg_preprocess, avg_iekf, avg_map);
+        spdlog::info("[Estimator] Frame {}: Total={:.2f}ms (Preprocess={:.2f}ms, IEKF={:.2f}ms, Map={:.2f}ms), Corr={}",
+                     m_frame_count, avg_total, avg_preprocess, avg_iekf, avg_map,
+                     m_num_valid_correspondences);
         
         // Reset accumulators
         m_sum_preprocess_time = 0.0;
@@ -565,304 +577,303 @@ void Estimator::ProcessLidar(const LidarData& lidar) {
     }
 }
 
-void Estimator::UpdateWithLidar(const LidarData& lidar) {
-     // Reset PKO for new scan
-      
-    // Nested Iterated Extended Kalman Filter (IEKF)
-    // Outer loop: Re-linearization (find new correspondences)
-    // Inner loop: Convergence (update state with same correspondences)
-     const int max_outer_iterations = m_params.max_iterations; // Re-linearization iterations from config
-     const int max_inner_iterations = 4;                       // State update iterations per correspondence
-     bool converged = false;
-
-     int total_inner_iters = 0;
-     double residual_normalization_scale = 1.0; // For PKO normalization
-
-     // Last correspondences found (for map update after loop)
-     std::vector<std::tuple<Eigen::Vector3f, Eigen::Vector3f, float, size_t>> correspondences;
-
-     for (int outer_iter = 0; outer_iter < max_outer_iterations; outer_iter++)
-     {
-
-         if (m_pko)
-         {
-             m_pko->Reset();
-         }
-
-         // OUTER LOOP: Find correspondences at current state
-         correspondences = FindCorrespondences(lidar.cloud);
-
-         if (correspondences.empty())
-         {
-             break;
-         }
-
-         // INNER LOOP: Update state multiple times with SAME correspondences
-         bool inner_converged = false;
-         Eigen::Matrix<float, 18, 18> G_final;
-
-         for (int inner_iter = 0; inner_iter < max_inner_iterations; inner_iter++)
-         {
-             total_inner_iters++;
-
-             // Compute Jacobian H and residual at current state (with SAME correspondences)
-             Eigen::MatrixXf H;
-             Eigen::VectorXf residual;
-             ComputeLidarJacobians(correspondences, H, residual);
-
-             // Calculate residual normalization scale (only once at first iteration)
-             if (inner_iter == 0 && residual.size() > 0)
-             {
-                 std::vector<double> residuals_for_scale;
-                 residuals_for_scale.reserve(residual.size());
-                 for (int i = 0; i < residual.size(); i++)
-                 {
-                     residuals_for_scale.push_back(static_cast<double>(residual(i)));
-                 }
-                //  std::sort(residuals_for_scale.begin(), residuals_for_scale.end());
-
-                 double mean = std::accumulate(residuals_for_scale.begin(), residuals_for_scale.end(), 0.0) / residuals_for_scale.size();
-                 double variance = 0.0;
-                 for (double val : residuals_for_scale)
-                 {
-                     variance += (val - mean) * (val - mean);
-                 }
-                 variance /= residuals_for_scale.size();
-                 double std_dev = std::sqrt(variance);
-
-                 // Calculate residual normalization scale (std / 3)
-                 residual_normalization_scale = std_dev / 3.0;
-
-                 // spdlog::info("[PKO] Residual normalization scale (std/3): {:.6f}", residual_normalization_scale);
-             }
-
-             // Calculate adaptive Huber scale using PKO with normalized residuals
-             double adaptive_huber_delta = 1.0; // Default value
-             if (m_pko)
-             {
-                 // Convert residuals from float to double and normalize
-                 std::vector<double> residuals_double(residual.size());
-                 for (int i = 0; i < residual.size(); i++)
-                 {
-                     double normalized_residual = static_cast<double>(residual(i)) / std::max(residual_normalization_scale, 1e-6);
-                     residuals_double[i] = normalized_residual;
-                 }
-
-                 // Calculate adaptive scale factor (alpha) using normalized residuals
-                 adaptive_huber_delta = m_pko->CalculateScaleFactor(residuals_double);
-
-                 // spdlog::info("[PKO] Outer iter {}, Inner iter {}: alpha = {:.6f}", outer_iter, inner_iter, adaptive_huber_delta);
-             }
-
-             // Normalize residuals for numerical stability
-             float normalization_scale_f = static_cast<float>(residual_normalization_scale);
-             Eigen::VectorXf normalized_residual = residual / std::max(normalization_scale_f, 1e-6f);
-
-             int num_corr = correspondences.size();
-
-             // Compute Huber weights using normalized residuals and adaptive delta
-             float huber_threshold = static_cast<float>(adaptive_huber_delta);
-             Eigen::VectorXf huber_weights(num_corr);
-
-             for (int i = 0; i < num_corr; i++)
-             {
-                 float abs_normalized_residual = std::abs(normalized_residual(i));
-
-                 if (abs_normalized_residual <= huber_threshold)
-                 {
-                     // L2 region: w = 1
-                     huber_weights(i) = 1.0f;
-                 }
-                 else
-                 {
-                     // L1 region: w = threshold / |normalized_residual|
-                     huber_weights(i) = huber_threshold / abs_normalized_residual;
-                 }
-             }
-
-             // Compute R_inv with Huber weighting
-             Eigen::VectorXf R_inv(num_corr);
-             for (int i = 0; i < num_corr; i++)
-             {
-                 float sigma = m_params.lidar_noise_std * m_params.lidar_noise_std;
-                 // Apply Huber weight to measurement noise inverse
-                 R_inv(i) = huber_weights(i) / (0.001f + sigma);
-             }
-
-             // Compute H^T * R_inv (6 x num_corr)
-             Eigen::MatrixXf H_6 = H.block(0, 0, num_corr, 6);
-             Eigen::MatrixXf H_T_R_inv(6, num_corr);
-             for (int i = 0; i < num_corr; i++)
-             {
-                 H_T_R_inv.col(i) = H_6.row(i).transpose() * R_inv(i);
-             }
-
-             // Compute H^T * R^-1 * H (6x6)
-             Eigen::Matrix<float, 6, 6> H_T_R_inv_H = H_T_R_inv * H_6;
-
-             // Compute H^T * R^-1 * z
-             Eigen::Matrix<float, 6, 1> H_T_R_inv_z = H_T_R_inv * residual;
-
-             // Get prior covariance P (full 18x18)
-             Eigen::Matrix<float, 18, 18> P_prior = m_current_state.m_covariance;
-
-             // Build H^T*R^-1*H for full state (18x18)
-             Eigen::Matrix<float, 18, 18> H_T_R_inv_H_full = Eigen::Matrix<float, 18, 18>::Zero();
-             H_T_R_inv_H_full.block<6, 6>(0, 0) = H_T_R_inv_H;
-
-             // Compute Kalman gain: K_1 = (H^T * R^-1 * H + P^-1)^-1
-             Eigen::Matrix<float, 18, 18> information_matrix = H_T_R_inv_H_full + P_prior.inverse();
-             Eigen::Matrix<float, 18, 18> K_1 = information_matrix.inverse();
-
-             // Compute G matrix: G = K_1 * H^T*R^-1*H
-             Eigen::Matrix<float, 18, 18> G = Eigen::Matrix<float, 18, 18>::Zero();
-             G.block<18, 6>(0, 0) = K_1.block<18, 6>(0, 0) * H_T_R_inv_H;
-             G_final = G; // Save for covariance update
-
-             // Compute state correction
-             Eigen::Matrix<float, 18, 1> dx = K_1.block<18, 6>(0, 0) * H_T_R_inv_z;
-
-             // Apply state correction
-             ApplyStateCorrection(dx);
-
-             // Check inner convergence
-             float rot_norm = dx.segment<3>(0).norm();
-             float pos_norm = dx.segment<3>(3).norm();
-
-             // Inner convergence: state change is small
-             float convergence_threshold_f = static_cast<float>(m_params.convergence_threshold);
-             if (rot_norm < convergence_threshold_f && pos_norm < convergence_threshold_f)
-             {
-                 inner_converged = true;
-                 break;
-             }
-         }
-
-         // After inner loop: Check if we need outer re-linearization
-         // If inner loop converged quickly and state didn't change much, we're done
-         if (inner_converged && outer_iter > 0)
-         {
-             converged = true;
-
-             // Update covariance: P = (I - G) * P
-             Eigen::Matrix<float, 18, 18> I18 = Eigen::Matrix<float, 18, 18>::Identity();
-             Eigen::Matrix<float, 18, 18> P_prior = m_current_state.m_covariance;
-             m_current_state.m_covariance = (I18 - G_final) * P_prior;
-
-             break;
-         }
-
-         // If inner loop didn't converge or this is first outer iteration, continue to re-linearize
-     }
-
-    m_last_correspondences = correspondences;
+bool Estimator::ShouldUpdateMap(bool registered) {
+    if (registered) {
+        m_map_recovery_frames_remaining = 0;
+        return true;
+    }
+    if (m_num_valid_correspondences > 0) {
+        m_map_recovery_frames_remaining = std::max(0, m_params.map_recovery_frames);
+    }
+    if (m_map_recovery_frames_remaining == 0) {
+        return false;
+    }
+    --m_map_recovery_frames_remaining;
+    return true;
 }
 
-// ============================================================================
+bool Estimator::UpdateWithLidar(const LidarData& lidar) {
+    const char* diagnostic_minimum =
+        std::getenv("LIO_DIAGNOSTIC_MIN_CORRESPONDENCES");
+    const int kMinimumCorrespondences = diagnostic_minimum == nullptr
+        ? 6
+        : std::max(1, std::atoi(diagnostic_minimum));
+    constexpr int kMaximumLineSearchSteps = 8;
+    m_num_valid_correspondences = 0;
+    const State predicted_state = m_current_state;
+    const State::Covariance predicted_covariance = m_current_state.m_covariance;
+    const bool diagnostics_enabled = std::getenv("LIO_DIAGNOSTICS") != nullptr;
+    VoxelMap::MatchDiagnostics diagnostics;
+    auto log_diagnostics = [&](const char* outcome) {
+        if (!diagnostics_enabled) {
+            return;
+        }
+        const SpatialIndex::Statistics index = m_voxel_map->GetPointIndexStatistics();
+        spdlog::info(
+            "[CorrespondenceDiag] frame={} t={:.3f} outcome={} queries={} accepted={} "
+            "map={} neighbors={} centroid={} eigen={} degenerate={} planarity={} "
+            "neighbor_plane={} query_plane={} nodes={} valid={} deleted={} depth={} rebuilds={} "
+            "v={:.6g} bg={:.6g} ba={:.6g} pose_cov={:.6g} bias_cov={:.6g}",
+            m_frame_count, lidar.timestamp, outcome, diagnostics.queries, diagnostics.accepted,
+            diagnostics.insufficient_map, diagnostics.insufficient_neighbors,
+            diagnostics.centroid_gate, diagnostics.eigen_failure,
+            diagnostics.degenerate_neighbors, diagnostics.planarity_gate,
+            diagnostics.neighbor_plane_gate, diagnostics.query_plane_gate,
+            index.node_count, index.valid_count, index.deleted_count, index.max_depth,
+            index.rebuild_count, predicted_state.m_velocity.norm(),
+            predicted_state.m_gyro_bias.norm(),
+            predicted_state.m_acc_bias.norm(),
+            predicted_covariance.block<6, 6>(State::kRotationIndex, State::kRotationIndex).trace(),
+            predicted_covariance.block<6, 6>(State::kGyroBiasIndex, State::kGyroBiasIndex).trace());
+    };
+    Eigen::LDLT<State::Covariance> prior_solver(predicted_covariance);
+    if (prior_solver.info() != Eigen::Success || !prior_solver.isPositive()) {
+        log_diagnostics("prior_covariance");
+        return false;
+    }
+    const State::Covariance prior_information =
+        prior_solver.solve(State::Covariance::Identity());
+
+    auto prior_jacobian = [&](const State& state) {
+        State::Covariance jacobian = State::Covariance::Identity();
+        const State::Vector error = state - predicted_state;
+        const Eigen::Vector3d rotation_error = error.segment<3>(State::kRotationIndex);
+        const double angle = rotation_error.norm();
+        const Eigen::Matrix3d skew = Hat(rotation_error);
+        Eigen::Matrix3d inverse_right_jacobian =
+            Eigen::Matrix3d::Identity() + 0.5 * skew;
+        if (angle < 1e-10) {
+            inverse_right_jacobian += skew * skew / 12.0;
+        } else {
+            const double coefficient = 1.0 / (angle * angle)
+                - (1.0 + std::cos(angle)) / (2.0 * angle * std::sin(angle));
+            inverse_right_jacobian += coefficient * skew * skew;
+        }
+        jacobian.block<3, 3>(State::kRotationIndex, State::kRotationIndex) =
+            inverse_right_jacobian;
+        jacobian.block<2, 2>(State::kGravityIndex, State::kGravityIndex) =
+            State::GravityTangentBasis(predicted_state.m_gravity).transpose()
+            * State::GravityTangentBasis(state.m_gravity);
+        return jacobian;
+    };
+
+    auto inverse_noise = [&](const Eigen::VectorXd& residual) {
+        std::vector<double> absolute_residuals(residual.size());
+        for (int index = 0; index < residual.size(); ++index) {
+            absolute_residuals[index] = std::abs(residual(index));
+        }
+        const size_t middle = absolute_residuals.size() / 2;
+        std::nth_element(absolute_residuals.begin(),
+            absolute_residuals.begin() + middle, absolute_residuals.end());
+        const double scale = std::max(
+            1.4826 * absolute_residuals[middle], m_params.lidar_noise_std);
+        const double threshold = 1.345 * scale;
+        Eigen::VectorXd result(residual.size());
+        const double variance = m_params.lidar_noise_std * m_params.lidar_noise_std;
+        for (int index = 0; index < residual.size(); ++index) {
+            const double magnitude = std::abs(residual(index));
+            const double weight = magnitude <= threshold ? 1.0 : threshold / magnitude;
+            result(index) = weight / std::max(variance, 1e-12);
+        }
+        return result;
+    };
+
+    std::vector<Correspondence> correspondences;
+    for (int iteration = 0; iteration < m_params.max_iterations; ++iteration) {
+        correspondences = FindCorrespondences(
+            lidar.cloud, 0, diagnostics_enabled && iteration == 0 ? &diagnostics : nullptr);
+        if (correspondences.size() < kMinimumCorrespondences) {
+            m_num_valid_correspondences = correspondences.size();
+            m_current_state = predicted_state;
+            log_diagnostics("initial_correspondences");
+            return false;
+        }
+
+        Eigen::MatrixXd jacobian;
+        Eigen::VectorXd residual;
+        ComputeLidarJacobians(correspondences, jacobian, residual);
+        const Eigen::VectorXd weights = inverse_noise(residual);
+        const Eigen::MatrixXd weighted_jacobian =
+            weights.asDiagonal() * jacobian;
+        const State::Vector prior_error = m_current_state - predicted_state;
+        const State::Covariance retraction_jacobian = prior_jacobian(m_current_state);
+        const State::Covariance information =
+            retraction_jacobian.transpose() * prior_information * retraction_jacobian
+            + jacobian.transpose() * weighted_jacobian;
+        const State::Vector right_hand_side =
+            jacobian.transpose() * (weights.asDiagonal() * residual)
+            - retraction_jacobian.transpose() * prior_information * prior_error;
+
+        Eigen::LDLT<State::Covariance> solver(information);
+        if (solver.info() != Eigen::Success || !solver.isPositive()) {
+            m_num_valid_correspondences = correspondences.size();
+            m_current_state = predicted_state;
+            log_diagnostics("information_solver");
+            return false;
+        }
+        const State::Vector correction = solver.solve(right_hand_side);
+        if (!correction.allFinite()) {
+            m_num_valid_correspondences = correspondences.size();
+            m_current_state = predicted_state;
+            log_diagnostics("nonfinite_correction");
+            return false;
+        }
+
+        const State linearization_state = m_current_state;
+        const double current_objective =
+            prior_error.dot(prior_information * prior_error)
+            + residual.dot(weights.cwiseProduct(residual));
+        State::Vector accepted_correction = State::Vector::Zero();
+        bool accepted = false;
+        double step_size = 1.0;
+        for (int line_search_step = 0;
+             line_search_step < kMaximumLineSearchSteps;
+             ++line_search_step) {
+            accepted_correction = step_size * correction;
+            m_current_state = linearization_state + accepted_correction;
+
+            Eigen::MatrixXd candidate_jacobian;
+            Eigen::VectorXd candidate_residual;
+            ComputeLidarJacobians(
+                correspondences, candidate_jacobian, candidate_residual);
+            const Eigen::VectorXd candidate_weights = inverse_noise(candidate_residual);
+            const State::Vector candidate_prior_error =
+                m_current_state - predicted_state;
+            const double candidate_objective =
+                candidate_prior_error.dot(prior_information * candidate_prior_error)
+                + candidate_residual.dot(
+                    candidate_weights.cwiseProduct(candidate_residual));
+            const auto candidate_correspondences =
+                FindCorrespondences(lidar.cloud, kMinimumCorrespondences);
+            if (candidate_correspondences.size() >= kMinimumCorrespondences
+                && std::isfinite(candidate_objective)
+                && candidate_objective
+                    <= current_objective + 1e-9 * std::max(1.0, current_objective)) {
+                accepted = true;
+                break;
+            }
+            step_size *= 0.5;
+        }
+        if (!accepted) {
+            m_num_valid_correspondences = correspondences.size();
+            m_current_state = predicted_state;
+            log_diagnostics("line_search");
+            return false;
+        }
+
+        if (accepted_correction.segment<3>(State::kRotationIndex).norm()
+                < m_params.convergence_threshold
+            && accepted_correction.segment<3>(State::kPositionIndex).norm()
+                < m_params.convergence_threshold) {
+            break;
+        }
+    }
+
+    correspondences = FindCorrespondences(lidar.cloud);
+    if (correspondences.size() < kMinimumCorrespondences) {
+        m_num_valid_correspondences = correspondences.size();
+        m_current_state = predicted_state;
+        log_diagnostics("final_correspondences");
+        return false;
+    }
+    Eigen::MatrixXd final_jacobian;
+    Eigen::VectorXd final_residual;
+    ComputeLidarJacobians(correspondences, final_jacobian, final_residual);
+    const Eigen::VectorXd final_weights = inverse_noise(final_residual);
+    const State::Covariance final_prior_jacobian = prior_jacobian(m_current_state);
+    const State::Covariance final_information =
+        final_prior_jacobian.transpose() * prior_information * final_prior_jacobian
+        + final_jacobian.transpose() * final_weights.asDiagonal() * final_jacobian;
+    Eigen::LDLT<State::Covariance> final_solver(final_information);
+    if (final_solver.info() != Eigen::Success || !final_solver.isPositive()) {
+        m_num_valid_correspondences = correspondences.size();
+        m_current_state = predicted_state;
+        log_diagnostics("final_solver");
+        return false;
+    }
+
+    const State::Covariance posterior_covariance =
+        final_solver.solve(State::Covariance::Identity());
+    if (!posterior_covariance.allFinite()) {
+        m_num_valid_correspondences = correspondences.size();
+        m_current_state = predicted_state;
+        log_diagnostics("posterior_covariance");
+        return false;
+    }
+    m_current_state.m_covariance = posterior_covariance;
+    StabilizeCovariance(m_current_state.m_covariance);
+    m_last_correspondences = correspondences;
+    log_diagnostics("success");
+    return true;
+}
 // Correspondence Finding
 // ============================================================================
 
-std::vector<std::tuple<Eigen::Vector3f, Eigen::Vector3f, float, size_t>> 
-Estimator::FindCorrespondences(const PointCloudPtr scan) {
-    std::vector<std::tuple<Eigen::Vector3f, Eigen::Vector3f, float, size_t>> correspondences;
-
-    // Check if VoxelMap is available and has points
-    if (!m_voxel_map || m_voxel_map->GetPointCount() == 0) {
-        spdlog::warn("[Estimator] VoxelMap is empty, no correspondences found");
+std::vector<Estimator::Correspondence>
+Estimator::FindCorrespondences(
+    const PointCloudPtr scan, std::size_t maximum_correspondences,
+    VoxelMap::MatchDiagnostics* diagnostics) {
+    std::vector<Correspondence> correspondences;
+    m_num_valid_correspondences = 0;
+    if (!m_voxel_map || m_voxel_map->GetPointCount() == 0 || !scan || scan->empty()
+        || m_params.max_correspondences <= 0) {
         return correspondences;
     }
-    
-    if (!scan || scan->empty()) {
-        spdlog::warn("[Estimator] Scan is empty, no correspondences found");
-        return correspondences;
+    if (maximum_correspondences == 0) {
+        maximum_correspondences = static_cast<std::size_t>(m_params.max_correspondences);
     }
-    
-    // Get current state
-    Eigen::Matrix3f R_wb = m_current_state.m_rotation;
-    Eigen::Vector3f t_wb = m_current_state.m_position;
-    
-    
-    // Build transformation matrix ONCE: T_world_lidar = T_world_body * T_body_lidar
-    Eigen::Matrix4f T_wb = Eigen::Matrix4f::Identity();
-    T_wb.block<3,3>(0,0) = R_wb;
-    T_wb.block<3,1>(0,3) = t_wb;
-    
-    Eigen::Matrix4f T_il = Eigen::Matrix4f::Identity();
-    T_il.block<3,3>(0,0) = m_params.R_il;
-    T_il.block<3,1>(0,3) = m_params.t_il;
-    
-    Eigen::Matrix4f T_wl = T_wb * T_il;  // Combined transformation
-    
-    // Process points and find correspondences using L1 surfels
-    int valid_correspondences = 0;
-    int total_attempts = 0;
-    int no_surfel_count = 0;
+    correspondences.reserve(std::min(maximum_correspondences, scan->size()));
 
-    for (size_t i = 0; i < scan->size(); ++i) {
-        // Early termination: stop when we have enough correspondences
-        
-        total_attempts++;
-        
-        // === 1. Transform point to world frame ===
-        const auto& pt_scan = scan->at(i);
-        Eigen::Vector4f pt_homo(pt_scan.x, pt_scan.y, pt_scan.z, 1.0f);
-        Eigen::Vector4f pt_world_homo = T_wl * pt_homo;
-        
-        // Create query point in world frame
-        Point3D query_point;
-        query_point.x = pt_world_homo.x();
-        query_point.y = pt_world_homo.y();
-        query_point.z = pt_world_homo.z();
-        
-        // === 2. Get surfel from the L1 voxel containing this point ===
-        Eigen::Vector3f surfel_normal;
-        Eigen::Vector3f surfel_centroid;
-        float planarity_score;
-        
-        bool has_surfel = m_voxel_map->GetSurfelAtPoint(query_point, surfel_normal, surfel_centroid, planarity_score);
+    const Eigen::Matrix3d rotation_world_lidar =
+        m_current_state.m_rotation * m_params.R_il;
+    const Eigen::Vector3d translation_world_lidar =
+        m_current_state.m_rotation * m_params.t_il + m_current_state.m_position;
+    const float centroid_distance_gate =
+        static_cast<float>(m_params.max_correspondence_distance);
+    const float plane_distance_gate =
+        static_cast<float>(m_params.kdtree_max_plane_residual);
 
-        if (!has_surfel) {
-            no_surfel_count++;
-            continue;  // No surfel in this L1 voxel
-        }
+    for (size_t index = 0;
+         index < scan->size() && correspondences.size() < maximum_correspondences;
+         ++index) {
+            const Point3D& point = scan->at(index);
+            const Eigen::Vector3d point_lidar(point.x, point.y, point.z);
+            const Eigen::Vector3d point_world =
+                rotation_world_lidar * point_lidar + translation_world_lidar;
+            Point3D query;
+            query.x = static_cast<float>(point_world.x());
+            query.y = static_cast<float>(point_world.y());
+            query.z = static_cast<float>(point_world.z());
 
-        // === 3. Calculate point-to-plane distance ===
-        Eigen::Vector3f p_world(query_point.x, query_point.y, query_point.z);
-        float dist_to_plane = std::abs(surfel_normal.dot(p_world - surfel_centroid));
-        // // voxel size
-        // if(dist_to_plane > 0.5f) {
-        //     continue;  // Discard point if too far from surfel
-        // }
-
-        // === 4. Add valid correspondence ===
-        // Plane equation: n^T * x + d = 0, where d = -n^T * centroid
-        float plane_d = -surfel_normal.dot(surfel_centroid);
-
- 
-        
-        // Store original lidar point
-        Eigen::Vector3f p_lidar(pt_scan.x, pt_scan.y, pt_scan.z);
-        
-        // Store: (p_lidar, plane_normal_world, plane_d, scan_index)
-        correspondences.emplace_back(p_lidar, surfel_normal, plane_d, i);
-        valid_correspondences++;
+            Eigen::Vector3f normal_float;
+            Eigen::Vector3f centroid_float;
+            float planarity = 0.0f;
+            if (!m_voxel_map->GetClosestSurfel(
+                    query, centroid_distance_gate, plane_distance_gate,
+                    normal_float, centroid_float, planarity, diagnostics)) {
+                continue;
+            }
+            const Eigen::Vector3d normal = normal_float.cast<double>();
+            const Eigen::Vector3d centroid = centroid_float.cast<double>();
+            const double distance = std::abs(normal.dot(point_world - centroid));
+            if (distance > plane_distance_gate) {
+                continue;
+            }
+            correspondences.emplace_back(
+                point_lidar, normal, -normal.dot(centroid), index);
     }
-    
-    // Update valid correspondence count
-    m_num_valid_correspondences = valid_correspondences;
 
+    m_num_valid_correspondences = correspondences.size();
     return correspondences;
 }
-
-// ============================================================================
 // Local Map Management
 // ============================================================================
 
 void Estimator::UpdateLocalMap(const PointCloudPtr scan) {
     auto start_total = std::chrono::high_resolution_clock::now();
     
-    Eigen::Matrix3f R_wb = m_current_state.m_rotation;
-    Eigen::Vector3f t_wb = m_current_state.m_position;
+    Eigen::Matrix3d R_wb = m_current_state.m_rotation;
+    Eigen::Vector3d t_wb = m_current_state.m_position;
     
     // Every frame is a keyframe (always add to map)
     bool is_keyframe = true;
@@ -875,11 +886,11 @@ void Estimator::UpdateLocalMap(const PointCloudPtr scan) {
     int added_count = 0;
     for (const auto& pt : *scan) {
         // LiDAR point in sensor frame
-        Eigen::Vector3f p_lidar(pt.x, pt.y, pt.z);
+        Eigen::Vector3d p_lidar(pt.x, pt.y, pt.z);
         
         // Transform: p_world = R_wb * (R_il * p_lidar + t_il) + t_wb
-        Eigen::Vector3f p_imu = m_params.R_il * p_lidar + m_params.t_il;
-        Eigen::Vector3f p_world = R_wb * p_imu + t_wb;
+        Eigen::Vector3d p_imu = m_params.R_il * p_lidar + m_params.t_il;
+        Eigen::Vector3d p_world = R_wb * p_imu + t_wb;
         
         // Add to transformed scan
         Point3D map_pt;
@@ -902,10 +913,13 @@ void Estimator::UpdateLocalMap(const PointCloudPtr scan) {
     
     // Update voxel map: add new points and remove voxels outside map box
     if (!m_voxel_map) {
-        m_voxel_map = std::make_shared<VoxelMap>(static_cast<float>(m_params.voxel_size));
+        m_voxel_map = std::make_shared<VoxelMap>(static_cast<float>(m_params.map_voxel_size));
         m_voxel_map->SetHierarchyFactor(m_params.voxel_hierarchy_factor);
         m_voxel_map->SetPlanarityThreshold(static_cast<float>(m_params.map_planarity_threshold));
         m_voxel_map->SetPointToSurfelThreshold(static_cast<float>(m_params.point_to_surfel_threshold));
+        m_voxel_map->SetKNearestNeighbors(m_params.kdtree_knn);
+        m_voxel_map->SetKnnPlanarityThreshold(
+            static_cast<float>(m_params.kdtree_planarity_threshold));
         m_voxel_map->SetMinSurfelInliers(m_params.min_surfel_inliers);
         m_voxel_map->SetMinLinearityRatio(static_cast<float>(m_params.min_linearity_ratio));
         m_voxel_map->SetMapBoxMultiplier(static_cast<float>(m_params.map_box_multiplier));
@@ -943,10 +957,13 @@ void Estimator::CleanLocalMap() {
         
         // Rebuild VoxelMap after cleaning
         if (!m_map_cloud->empty()) {
-            m_voxel_map = std::make_shared<VoxelMap>(static_cast<float>(m_params.voxel_size));
+            m_voxel_map = std::make_shared<VoxelMap>(static_cast<float>(m_params.map_voxel_size));
             m_voxel_map->SetHierarchyFactor(m_params.voxel_hierarchy_factor);
             m_voxel_map->SetPlanarityThreshold(static_cast<float>(m_params.map_planarity_threshold));
             m_voxel_map->SetPointToSurfelThreshold(static_cast<float>(m_params.point_to_surfel_threshold));
+            m_voxel_map->SetKNearestNeighbors(m_params.kdtree_knn);
+            m_voxel_map->SetKnnPlanarityThreshold(
+                static_cast<float>(m_params.kdtree_planarity_threshold));
             m_voxel_map->SetMinSurfelInliers(m_params.min_surfel_inliers);
             m_voxel_map->SetMinLinearityRatio(static_cast<float>(m_params.min_linearity_ratio));
             m_voxel_map->SetMapBoxMultiplier(static_cast<float>(m_params.map_box_multiplier));
@@ -963,38 +980,38 @@ void Estimator::CleanLocalMap() {
 // ============================================================================
 
 void Estimator::ComputeLidarJacobians(
-    const std::vector<std::tuple<Eigen::Vector3f, Eigen::Vector3f, float, size_t>>& correspondences,
-    Eigen::MatrixXf& H,
-    Eigen::VectorXf& residual) 
+    const std::vector<Correspondence>& correspondences,
+    Eigen::MatrixXd& H,
+    Eigen::VectorXd& residual)
 {
     // Compute Jacobian matrix H and residual vector for point-to-plane correspondences
-    // State: [rotation(3), position(3), velocity(3), gyro_bias(3), acc_bias(3), gravity(3)]
+    // State: [rotation(3), position(3), velocity(3), gyro_bias(3), acc_bias(3), gravity tangent(2)]
     // LiDAR only observes rotation and position, other states have zero Jacobian
     
     int num_corr = correspondences.size();
-    H.resize(num_corr, 18);
+    H.resize(num_corr, State::kStateDim);
     residual.resize(num_corr);
     
     H.setZero();
     residual.setZero();
     
     // Get current state
-    Eigen::Matrix3f R_wb = m_current_state.m_rotation;
-    Eigen::Vector3f t_wb = m_current_state.m_position;
+    Eigen::Matrix3d R_wb = m_current_state.m_rotation;
+    Eigen::Vector3d t_wb = m_current_state.m_position;
     
     // Process each correspondence
     for (int i = 0; i < num_corr; i++) {
         // Extract correspondence data: (p_lidar, plane_normal, plane_d)
-        const Eigen::Vector3f& p_lidar = std::get<0>(correspondences[i]);
-        const Eigen::Vector3f& norm_vec = std::get<1>(correspondences[i]);  // plane normal (world frame)
-        const float plane_d = std::get<2>(correspondences[i]);
+        const Eigen::Vector3d& p_lidar = std::get<0>(correspondences[i]);
+        const Eigen::Vector3d& norm_vec = std::get<1>(correspondences[i]);  // plane normal (world frame)
+        const double plane_d = std::get<2>(correspondences[i]);
         
         // Transform point through chain: LiDAR -> IMU -> World
         // p_imu = R_il * p_lidar + t_il
-        Eigen::Vector3f p_imu = m_params.R_il * p_lidar + m_params.t_il;
+        Eigen::Vector3d p_imu = m_params.R_il * p_lidar + m_params.t_il;
         
         // p_world = R_wb * p_imu + t_wb
-        Eigen::Vector3f p_world = R_wb * p_imu + t_wb;
+        Eigen::Vector3d p_world = R_wb * p_imu + t_wb;
         
         // ===== Residual Computation =====
         // Point-to-plane distance: dis_to_plane = n^T * p_w + d
@@ -1005,72 +1022,26 @@ void Estimator::ComputeLidarJacobians(
         // ===== Jacobian Computation =====
         
         // Transform normal to body frame: C = R_wb^T * n
-        Eigen::Vector3f C = R_wb.transpose() * norm_vec;
+        Eigen::Vector3d C = R_wb.transpose() * norm_vec;
         
         // Rotation Jacobian: A = [p_imu]× * C
         // A = point_crossmat * state_rotation.transpose() * normal
         // Using POSITIVE sign for proper gradient direction
-        Eigen::Matrix3f p_imu_skew = Hat(p_imu);
-        Eigen::Vector3f A = p_imu_skew * C;
+        Eigen::Matrix3d p_imu_skew = Hat(p_imu);
+        Eigen::Vector3d A = p_imu_skew * C;
         
         // Position Jacobian: simply the normal vector
         // ∂r/∂t = ∂(n^T * (R * p_imu + t))/∂t = n^T
         
-        // Fill Jacobian row (1×18)
-        // State order: [rotation(3), position(3), velocity(3), gyro_bias(3), acc_bias(3), gravity(3)]
+        // LiDAR directly observes only pose.
         H.block<1, 3>(i, 0) = A.transpose();           // ∂r/∂rotation
         H.block<1, 3>(i, 3) = norm_vec.transpose();    // ∂r/∂position
         // H.block<1, 12>(i, 6) = 0;                   // velocity, biases, gravity (already zero)
     }
 }
 
-// ============================================================================
-// Noise Updates
-// ============================================================================
-
-void Estimator::UpdateProcessNoise(double dt) {
-    // Scale noise by time step (already set in constructor)
-    // Q matrix is used as Q * dt in propagation
-}
-
-void Estimator::UpdateMeasurementNoise(int num_correspondences) {
-    // Measurement noise R is diagonal (independent residuals)
-    m_measurement_noise = Eigen::MatrixXf::Identity(num_correspondences, num_correspondences);
-    m_measurement_noise *= m_params.lidar_noise_std * m_params.lidar_noise_std;
-}
-
-void Estimator::ApplyStateCorrection(const Eigen::VectorXf& dx) {
-    // Apply state correction on manifold (IEKF update)
-    // State: [rotation(3), position(3), velocity(3), gyro_bias(3), acc_bias(3), gravity(3)]
-    
-    if (dx.size() != 18) {
-        spdlog::error("[Estimator] Invalid state correction size: {} (expected 18)", dx.size());
-        return;
-    }
-    
-    // 1. Rotation: R_new = R * Exp(δθ)  (right perturbation on SO(3))
-    Eigen::Vector3f dtheta = dx.segment<3>(0);
-    Eigen::Matrix3f dR = SO3::Exp(dtheta).Matrix();
-    m_current_state.m_rotation = m_current_state.m_rotation * dR;
-    
-    // 2. Position: p_new = p + δp  (additive in R^3)
-    m_current_state.m_position += dx.segment<3>(3);
-    
-    // 3. Velocity: v_new = v + δv  (additive in R^3)
-    m_current_state.m_velocity += dx.segment<3>(6);
-    
-    // 4. Gyroscope bias: bg_new = bg + δbg  (additive in R^3)
-    m_current_state.m_gyro_bias += dx.segment<3>(9);
-    
-    // 5. Accelerometer bias: ba_new = ba + δba  (additive in R^3)
-    m_current_state.m_acc_bias += dx.segment<3>(12);
-    
-    // 6. Gravity: g_new = g + δg  (additive in R^3)
-    m_current_state.m_gravity += dx.segment<3>(15);
-    
-    // Log correction magnitude for debugging
-    spdlog::debug("[Estimator] State correction applied: rotation={:.6f}, position={:.6f}, velocity={:.6f}",
-                  dtheta.norm(), dx.segment<3>(3).norm(), dx.segment<3>(6).norm());
+void Estimator::ApplyStateCorrection(const State::Vector& correction) {
+    m_current_state += correction;
 }
 
 // ============================================================================
@@ -1144,20 +1115,25 @@ PointCloudPtr Estimator::UndistortPointCloud(
     
     // Store relative rotation and translation for each segment
     // These transform points from LiDAR at t_k to LiDAR at t_end
-    std::vector<Eigen::Matrix3f> R_rel(N);
-    std::vector<Eigen::Vector3f> t_rel(N);
+    std::vector<Eigen::Matrix3d> R_rel(N);
+    std::vector<Eigen::Vector3d> t_rel(N);
+    double maximum_relative_rotation = 0.0;
+    double maximum_relative_translation = 0.0;
     
     double scan_duration = scan_end_time - scan_start_time;
+    if (scan_duration <= 0.0) {
+        return cloud;
+    }
     double dt = scan_duration / N;
     
     // Extrinsics: LiDAR -> IMU
-    const Eigen::Matrix3f& R_il = m_params.R_il;  // R_imu_lidar
-    const Eigen::Vector3f& t_il = m_params.t_il;  // t_imu_lidar
+    const Eigen::Matrix3d& R_il = m_params.R_il;  // R_imu_lidar
+    const Eigen::Vector3d& t_il = m_params.t_il;  // t_imu_lidar
     
     // Get end state (reference frame)
     State state_end = InterpolateState(scan_end_time);
-    const Eigen::Matrix3f& R_end = state_end.m_rotation;  // R_world_imu at end
-    const Eigen::Vector3f& t_end = state_end.m_position;  // t_world_imu at end
+    const Eigen::Matrix3d& R_end = state_end.m_rotation;  // R_world_imu at end
+    const Eigen::Vector3d& t_end = state_end.m_position;  // t_world_imu at end
     
     // Pre-compute for each time segment
     for (int k = 0; k < N; k++) {
@@ -1165,8 +1141,8 @@ PointCloudPtr Estimator::UndistortPointCloud(
         
         // Get interpolated state at t_k
         State state_k = InterpolateState(t_k);
-        const Eigen::Matrix3f& R_i = state_k.m_rotation;  // R_world_imu at t_i
-        const Eigen::Vector3f& t_i = state_k.m_position;  // t_world_imu at t_i
+        const Eigen::Matrix3d& R_i = state_k.m_rotation;  // R_world_imu at t_i
+        const Eigen::Vector3d& t_i = state_k.m_position;  // t_world_imu at t_i
         
         // Compute relative transform from LiDAR at t_k to LiDAR at t_end
         // Following the original transformation chain:
@@ -1185,10 +1161,21 @@ PointCloudPtr Estimator::UndistortPointCloud(
         // R_rel = R_il^T * R_end^T * R_i * R_il
         // t_rel = R_il^T * R_end^T * (R_i * t_il + t_i - t_end) - R_il^T * t_il
         
-        Eigen::Matrix3f R_end_T = R_end.transpose();
+        Eigen::Matrix3d R_end_T = R_end.transpose();
         
         R_rel[k] = R_il.transpose() * R_end_T * R_i * R_il;
         t_rel[k] = R_il.transpose() * R_end_T * (R_i * t_il + t_i - t_end) - R_il.transpose() * t_il;
+        maximum_relative_rotation = std::max(
+            maximum_relative_rotation, Eigen::AngleAxisd(R_rel[k]).angle());
+        maximum_relative_translation = std::max(
+            maximum_relative_translation, t_rel[k].norm());
+    }
+    if (std::getenv("LIO_DIAGNOSTICS") != nullptr) {
+        spdlog::info(
+            "[DeskewDiag] frame={} history={} duration={:.6g} max_rotation={:.6g} "
+            "max_translation={:.6g}",
+            m_frame_count, m_state_history.size(), scan_duration,
+            maximum_relative_rotation, maximum_relative_translation);
     }
     
     // === 2. Apply pre-computed transforms to each point ===
@@ -1198,14 +1185,14 @@ PointCloudPtr Estimator::UndistortPointCloud(
         idx = std::max(0, std::min(idx, N - 1));
         
         // Apply relative transform
-        Eigen::Vector3f p_lidar(point.x, point.y, point.z);
-        Eigen::Vector3f p_undistorted = R_rel[idx] * p_lidar + t_rel[idx];
+        Eigen::Vector3d p_lidar(point.x, point.y, point.z);
+        Eigen::Vector3d p_undistorted = R_rel[idx] * p_lidar + t_rel[idx];
         
         // Create undistorted point
         Point3D undistorted_point(
-            p_undistorted.x(), 
-            p_undistorted.y(), 
-            p_undistorted.z(),
+            static_cast<float>(p_undistorted.x()),
+            static_cast<float>(p_undistorted.y()),
+            static_cast<float>(p_undistorted.z()),
             point.intensity,
             0.0f  // All points are now aligned to scan end time
         );
@@ -1257,36 +1244,35 @@ State Estimator::InterpolateState(double timestamp) const {
         }
         
         // Interpolation factor: alpha = 0 at t1, alpha = 1 at t2
-        double alpha = (timestamp - t1) / (t2 - t1);
-        float alpha_f = static_cast<float>(alpha);
+        const double alpha = (timestamp - t1) / (t2 - t1);
         
         State interpolated_state;
         
         // Linear interpolation for position
-        interpolated_state.m_position = (1.0f - alpha_f) * state_before->state.m_position 
-                                       + alpha_f * state_after->state.m_position;
+        interpolated_state.m_position = (1.0 - alpha) * state_before->state.m_position
+                                       + alpha * state_after->state.m_position;
         
         // Linear interpolation for velocity
-        interpolated_state.m_velocity = (1.0f - alpha_f) * state_before->state.m_velocity 
-                                       + alpha_f * state_after->state.m_velocity;
+        interpolated_state.m_velocity = (1.0 - alpha) * state_before->state.m_velocity
+                                       + alpha * state_after->state.m_velocity;
         
         // Spherical linear interpolation (SLERP) for rotation
-        Eigen::Quaternionf q1(state_before->state.m_rotation);
-        Eigen::Quaternionf q2(state_after->state.m_rotation);
-        Eigen::Quaternionf q_interp = q1.slerp(alpha_f, q2);
+        Eigen::Quaterniond q1(state_before->state.m_rotation);
+        Eigen::Quaterniond q2(state_after->state.m_rotation);
+        Eigen::Quaterniond q_interp = q1.slerp(alpha, q2);
         interpolated_state.m_rotation = q_interp.toRotationMatrix();
         
         // Linear interpolation for biases
-        interpolated_state.m_gyro_bias = (1.0f - alpha_f) * state_before->state.m_gyro_bias 
-                                        + alpha_f * state_after->state.m_gyro_bias;
-        interpolated_state.m_acc_bias = (1.0f - alpha_f) * state_before->state.m_acc_bias 
-                                       + alpha_f * state_after->state.m_acc_bias;
+        interpolated_state.m_gyro_bias = (1.0 - alpha) * state_before->state.m_gyro_bias
+                                        + alpha * state_after->state.m_gyro_bias;
+        interpolated_state.m_acc_bias = (1.0 - alpha) * state_before->state.m_acc_bias
+                                       + alpha * state_after->state.m_acc_bias;
         
         // Gravity should be constant
         interpolated_state.m_gravity = state_after->state.m_gravity;
         
         // Covariance: use the closer state's covariance
-        if (alpha_f < 0.5f) {
+        if (alpha < 0.5) {
             interpolated_state.m_covariance = state_before->state.m_covariance;
         } else {
             interpolated_state.m_covariance = state_after->state.m_covariance;

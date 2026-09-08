@@ -33,9 +33,11 @@ struct LIOConfig {
         bool enable_undistortion;
         double scan_duration;           // LiDAR scan duration (seconds)
         int init_imu_samples;           // Number of IMU samples for gravity initialization
-        double voxel_size;              // Voxel size for VoxelMap (meters)
+        double voxel_size;              // Scan downsampling voxel size (meters)
+        double map_voxel_size;          // Local KD-tree insertion voxel size (meters)
         int max_correspondences;        // Maximum number of correspondences
         double max_correspondence_distance; // Maximum distance for correspondence (meters)
+        double lidar_noise_std;        // LiDAR point-to-plane noise standard deviation (meters)
         int max_iterations;             // Maximum ICP iterations
         double convergence_threshold;   // Convergence threshold for ICP
         
@@ -43,6 +45,10 @@ struct LIOConfig {
         double scan_planarity_threshold;  // Planarity threshold for input scan downsampling (relaxed)
         double map_planarity_threshold;   // Planarity threshold for VoxelMap surfel creation (strict)
         double point_to_surfel_threshold; // Max distance from point to surfel plane (meters)
+        int kdtree_knn;                   // Neighbor count for query-time plane fitting
+        double kdtree_planarity_threshold; // Minimum 1 - lambda_min / lambda_mid
+        double kdtree_max_plane_residual; // Maximum point-to-plane correspondence residual
+		int map_recovery_frames;            // Maximum predicted-map frames after partial correspondence loss
         int min_surfel_inliers;           // Minimum inlier count for valid surfel
         double min_linearity_ratio;       // Min σ₁/σ₀ ratio to reject edges (higher = stricter)
         

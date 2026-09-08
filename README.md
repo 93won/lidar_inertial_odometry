@@ -1,23 +1,23 @@
-# Surfel-LIO
-Fast LiDAR-Inertial Odometry with Pre-computed Surfels and Hierarchical Z-order Voxel Hashing
+# LiDAR–Inertial Odometry with an Incremental Voxel KD-Tree
 
-### MIT License
+[MIT Licence](LICENSE)
 
+## Release Notes
 
-## Demo
-[![LIO Demo](https://img.youtube.com/vi/difotKwX6yo/0.jpg)](https://www.youtube.com/watch?v=difotKwX6yo)
+- [v0.1.0](docs/Release_Notes_v0.1.0.md)
 
 ## Features
 
-- **Iterated Extended Kalman Filter (IEKF)**: Direct LiDAR-IMU fusion with nested iteration for re-linearization and convergence
-- **Adaptive Robust Estimation**: Probabilistic Kernel Optimization (PKO) for automatic Huber loss scale tuning
-- **2-Level Hierarchical Voxel Map (L1→L0)**: Coarse-to-fine spatial indexing with Z-order Morton code hashing for cache-friendly O(1) lookup
-- **Pre-computed Surfel Planes**: L1 voxels store fitted plane surfels (normal, centroid, planarity) via incremental covariance, enabling fast point-to-plane correspondence
-- **Motion Compensation**: IMU-based undistortion for moving LiDAR scans
+- **Iterated Error-State Kalman Filter**: Tightly coupled LiDAR–IMU estimation with a fixed propagated prior during iterative updates.
+- **Incremental Voxel KD-Tree**: Voxel-managed representative points indexed by an incremental KD-tree, with exact nearest-neighbor queries, insertion, deletion, rebalancing, and AABB pruning.
+- **Gated Point-to-Plane Matching**: Local plane fitting with distance, planarity, and residual checks.
+- **Double-Precision Estimation**: Double-precision state, covariance, IMU propagation, and solver calculations.
+- **Fixed-Magnitude Gravity**: A two-degree-of-freedom gravity error state within a 17-dimensional error-state formulation.
+- **Motion Compensation**: IMU-based deskewing of raw points before downsampling.
 
 ### Probabilistic Kernel Optimization (PKO)
 
-This project implements adaptive robust estimation using Probabilistic Kernel Optimization for automatic Huber loss scale tuning. If you use this method in your research, please cite:
+The repository also includes a Probabilistic Kernel Optimization implementation for adaptive robust estimation. The current iterated ESKF update does not use this module. If you use the method in your research, please cite:
 
 ```bibtex
 @article{choi2025pko,
@@ -153,8 +153,9 @@ lidar_inertial_odometry/
 ├── src/
 │   ├── core/             # Core algorithm implementation
 │   │   ├── Estimator.h/cpp                  # IEKF-based LIO estimator
-│   │   ├── State.h/cpp                      # 18-dim state representation
-│   │   ├── VoxelMap.h/cpp                   # Hash-based voxel map for fast KNN
+│   │   ├── State.h/cpp                      # 17-dimensional error state
+│   │   ├── VoxelMap.h/cpp                   # Voxel-managed local map
+│   │   ├── SpatialIndex.h/cpp               # Incremental KD-tree with AABB pruning
 │   │   └── ProbabilisticKernelOptimizer.h/cpp # PKO for adaptive robust estimation
 │   │
 │   ├── util/             # Utility functions
@@ -176,8 +177,8 @@ lidar_inertial_odometry/
 │   ├── pangolin/         # 3D visualization
 │   └── spdlog/           # Logging (header-only)
 │
+├── docs/                 # Versioned release notes
+│   └── Release_Notes_v0.1.0.md
 ├── CMakeLists.txt        # CMake build configuration
 └── README.md             # This file
 ```
-
-
