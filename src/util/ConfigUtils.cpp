@@ -13,6 +13,8 @@
 #include "ConfigUtils.h"
 #include <yaml-cpp/yaml.h>
 #include <spdlog/spdlog.h>
+
+#include <algorithm>
 #include <fstream>
 
 namespace lio {
@@ -29,13 +31,19 @@ void SetDefaultConfig(LIOConfig& config) {
     config.estimator.scan_duration = 0.1;  // 100ms
     config.estimator.init_imu_samples = 100;
     config.estimator.voxel_size = 0.4f;
+    config.estimator.map_voxel_size = 0.2;
     config.estimator.max_correspondences = 500;
     config.estimator.max_correspondence_distance = 1.0;
+    config.estimator.lidar_noise_std = 0.05;
     config.estimator.max_iterations = 10;
     config.estimator.convergence_threshold = 1e-4;
     config.estimator.scan_planarity_threshold = 0.1;  // Relaxed threshold for input scan downsampling
     config.estimator.map_planarity_threshold = 0.01;  // Strict threshold for VoxelMap surfel
     config.estimator.point_to_surfel_threshold = 0.1; // Max distance from point to surfel (meters)
+    config.estimator.kdtree_knn = 5;
+    config.estimator.kdtree_planarity_threshold = 0.3;
+    config.estimator.kdtree_max_plane_residual = 0.5;
+	config.estimator.map_recovery_frames = 50;
     config.estimator.min_surfel_inliers = 5;          // Minimum inlier count for valid surfel
     config.estimator.min_linearity_ratio = 0.3;       // Min σ₁/σ₀ to reject edges
     config.estimator.min_distance = 0.5;
@@ -118,10 +126,14 @@ bool LoadConfig(const std::string& config_path, LIOConfig& config) {
                 config.estimator.init_imu_samples = estimator["init_imu_samples"].as<int>();
             if (estimator["voxel_size"]) 
                 config.estimator.voxel_size = estimator["voxel_size"].as<double>();
+            if (estimator["map_voxel_size"])
+                config.estimator.map_voxel_size = estimator["map_voxel_size"].as<double>();
             if (estimator["max_correspondences"]) 
                 config.estimator.max_correspondences = estimator["max_correspondences"].as<int>();
             if (estimator["max_correspondence_distance"]) 
                 config.estimator.max_correspondence_distance = estimator["max_correspondence_distance"].as<double>();
+            if (estimator["lidar_noise_std"])
+                config.estimator.lidar_noise_std = estimator["lidar_noise_std"].as<double>();
             if (estimator["max_iterations"]) 
                 config.estimator.max_iterations = estimator["max_iterations"].as<int>();
             if (estimator["convergence_threshold"]) 
@@ -162,6 +174,14 @@ bool LoadConfig(const std::string& config_path, LIOConfig& config) {
                 config.estimator.map_planarity_threshold = estimator["map_planarity_threshold"].as<double>();
             if (estimator["point_to_surfel_threshold"]) 
                 config.estimator.point_to_surfel_threshold = estimator["point_to_surfel_threshold"].as<double>();
+            if (estimator["kdtree_knn"])
+                config.estimator.kdtree_knn = estimator["kdtree_knn"].as<int>();
+            if (estimator["kdtree_planarity_threshold"])
+                config.estimator.kdtree_planarity_threshold = estimator["kdtree_planarity_threshold"].as<double>();
+            if (estimator["kdtree_max_plane_residual"])
+                config.estimator.kdtree_max_plane_residual = estimator["kdtree_max_plane_residual"].as<double>();
+			if (estimator["map_recovery_frames"])
+				config.estimator.map_recovery_frames = std::max(0, estimator["map_recovery_frames"].as<int>());
             if (estimator["min_surfel_inliers"]) 
                 config.estimator.min_surfel_inliers = estimator["min_surfel_inliers"].as<int>();
             if (estimator["min_linearity_ratio"]) 
@@ -272,6 +292,7 @@ void PrintConfig(const LIOConfig& config) {
     spdlog::info("  Voxel Size: {:.2f} m", config.estimator.voxel_size);
     spdlog::info("  Max Correspondences: {}", config.estimator.max_correspondences);
     spdlog::info("  Max Correspondence Distance: {:.2f} m", config.estimator.max_correspondence_distance);
+    spdlog::info("  LiDAR Noise Std: {:.4f} m", config.estimator.lidar_noise_std);
     
     spdlog::info("Viewer:");
     spdlog::info("  Window Size: {}x{}", config.viewer.window_width, config.viewer.window_height);

@@ -46,6 +46,7 @@ add_library(lio_viewer
     src/util/LieUtils.cpp
     src/util/PointCloudUtils.cpp
     src/util/ConfigUtils.cpp
+    src/core/SpatialIndex.cpp
     src/core/VoxelMap.cpp
     src/core/State.cpp
     src/core/Estimator.cpp
@@ -87,3 +88,16 @@ target_link_libraries(lio_player
 )
 
 target_compile_options(lio_player PRIVATE -Wall -Wextra -O2)
+
+include(CTest)
+if(BUILD_TESTING AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/test")
+    add_executable(estimator_math_test test/estimator_math_test.cpp)
+    target_link_libraries(estimator_math_test lio_viewer)
+    target_compile_options(estimator_math_test PRIVATE -Wall -Wextra -O1)
+    add_test(NAME estimator_math_test COMMAND estimator_math_test)
+
+    add_executable(spatial_index_test test/spatial_index_test.cpp test/spatial_index_header_link.cpp src/core/SpatialIndex.cpp)
+    target_link_libraries(spatial_index_test Eigen3::Eigen)
+    target_compile_options(spatial_index_test PRIVATE -Wall -Wextra -O1)
+    add_test(NAME spatial_index_test COMMAND spatial_index_test)
+endif()

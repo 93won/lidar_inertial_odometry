@@ -56,3 +56,7 @@ cpu_monitor.py
 # OS files
 .DS_Store
 Thumbs.db
+
+# Local validation sources (not distributed)
+/test/
+/tests/

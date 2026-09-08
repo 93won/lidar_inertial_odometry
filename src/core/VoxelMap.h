@@ -1,6 +1,6 @@
 /**
  * @file      VoxelMap.h
- * @brief     Voxel-based hash map for efficient nearest neighbor search
+ * @brief     Voxel-deduplicated incremental KD-tree local map
  * @author    Seungwon Choi
  * @email     csw3575@snu.ac.kr
  * @date      2025-11-18
@@ -14,7 +14,10 @@
 #define VOXEL_MAP_H
 
 #include "PointCloudUtils.h"
+#include "SpatialIndex.h"
 #include "unordered_dense.h"  // Fast hash map (ankerl::unordered_dense)
+#include <algorithm>
+#include <cstdint>
 #include <unordered_set>
 #include <vector>
 #include <mutex>
@@ -94,16 +97,11 @@ public:
 };
 
 /**
- * @brief Voxel-based spatial hash map for efficient nearest neighbor search
- * 
- * This data structure provides O(1) voxel lookup and fast K-nearest neighbor search
- * by checking only neighboring voxels (27 voxels in 3x3x3 grid).
- * 
- * Performance comparison vs KdTree:
- * - KdTree: O(N * log(M)) where N=query points, M=map size
- * - VoxelMap: O(N * K) where K=fixed (27 voxels * points_per_voxel)
- * 
- * Expected speedup: 3-5x faster for large maps (20k+ points)
+ * @brief Local map with voxel deduplication and incremental KD-tree lookup
+ *
+ * L0 voxels retain one stable indexed representative. Correspondence queries
+ * fit a plane from K nearest representatives, independent of L1 boundaries.
+ * L1 surfels are retained only for visualization compatibility.
  */
 class VoxelMap {
 public:
@@ -175,6 +173,10 @@ public:
      *              Edge:  σ₀ >> σ₁ ≈ σ₂ → ratio ≈ 0.0
      */
     void SetMinLinearityRatio(float ratio) { m_min_linearity_ratio = ratio; }
+
+    void SetKNearestNeighbors(int count) { m_k_nearest_neighbors = std::max(3, count); }
+
+    void SetKnnPlanarityThreshold(float threshold) { m_knn_planarity_threshold = threshold; }
     
     /**
      * @brief Set map box multiplier (box_size = max_distance × multiplier)
@@ -190,12 +192,18 @@ public:
     /**
      * @brief Get current map center
      */
-    Eigen::Vector3f GetMapCenter() const { return m_map_center; }
+    Eigen::Vector3f GetMapCenter() const {
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
+        return m_map_center;
+    }
     
     /**
      * @brief Check if map has been initialized (first point added)
      */
-    bool IsMapInitialized() const { return m_map_initialized; }
+    bool IsMapInitialized() const {
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
+        return m_map_initialized;
+    }
     
     /**
      * @brief Get current hierarchy factor
@@ -244,6 +252,7 @@ public:
      * @brief Get total number of points in the map (sum of all voxel point counts)
      */
     size_t GetPointCount() const {
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         size_t total = 0;
         for (const auto& pair : m_voxels_L0) {
             total += pair.second.point_count;
@@ -254,13 +263,17 @@ public:
     /**
      * @brief Get number of occupied voxels
      */
-    size_t GetVoxelCount() const { return m_voxels_L0.size(); }
+    size_t GetVoxelCount() const {
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
+        return m_voxels_L0.size();
+    }
     
     /**
      * @brief Get all L0 voxel centroids
      * @return Vector of L0 centroids
      */
     std::vector<Eigen::Vector3f> GetL0Centroids() const {
+        std::lock_guard<std::recursive_mutex> lock(m_mutex);
         std::vector<Eigen::Vector3f> centroids;
         centroids.reserve(m_voxels_L0.size());
         for (const auto& pair : m_voxels_L0) {
@@ -351,6 +364,29 @@ public:
                           Eigen::Vector3f& normal,
                           Eigen::Vector3f& centroid,
                           float& planarity_score) const;
+
+    struct MatchDiagnostics {
+        std::size_t queries = 0;
+        std::size_t insufficient_map = 0;
+        std::size_t insufficient_neighbors = 0;
+        std::size_t centroid_gate = 0;
+        std::size_t eigen_failure = 0;
+        std::size_t degenerate_neighbors = 0;
+        std::size_t planarity_gate = 0;
+        std::size_t neighbor_plane_gate = 0;
+        std::size_t query_plane_gate = 0;
+        std::size_t accepted = 0;
+    };
+
+    bool GetClosestSurfel(const Point3D& point,
+                          float max_centroid_distance,
+                          float max_plane_distance,
+                          Eigen::Vector3f& normal,
+                          Eigen::Vector3f& centroid,
+                          float& planarity_score,
+                          MatchDiagnostics* diagnostics = nullptr) const;
+
+    SpatialIndex::Statistics GetPointIndexStatistics() const;
     
 private:
     /**
@@ -372,6 +408,9 @@ private:
      * @brief Unregister L0 voxel from parent hierarchy
      */
     void UnregisterFromParent(const VoxelKey& key_L0);
+
+    void AddPointUnlocked(const Point3D& point, std::vector<SpatialIndex::Point>& additions);
+    void ErasePointIndex(const VoxelKey& key);
     
     /**
      * @brief Get all neighboring voxel keys within a specified distance
@@ -388,6 +427,8 @@ private:
     float m_point_to_surfel_threshold = 0.1f; ///< Max distance from point to surfel plane (meters)
     int m_min_surfel_inliers = 5; ///< Minimum inlier count for valid surfel
     float m_min_linearity_ratio = 0.3f; ///< Min σ₁/σ₀ ratio to reject edges (higher = stricter)
+    int m_k_nearest_neighbors = 5;
+    float m_knn_planarity_threshold = 0.3f;
     
     // ===== Map Box Parameters =====
     float m_map_box_multiplier = 2.0f;  ///< Box size = max_distance × multiplier
@@ -402,9 +443,8 @@ private:
         Eigen::Vector3f centroid;
         int hit_count;
         int point_count;  // Number of points used to compute centroid
-        bool centroid_dirty;  // True if centroid was updated since last surfel computation
         
-        VoxelNode_L0() : centroid(Eigen::Vector3f::Zero()), hit_count(1), point_count(0), centroid_dirty(true) {}
+        VoxelNode_L0() : centroid(Eigen::Vector3f::Zero()), hit_count(1), point_count(0) {}
     };
     ankerl::unordered_dense::map<VoxelKey, VoxelNode_L0, VoxelKeyHash> m_voxels_L0;
     
@@ -431,6 +471,10 @@ private:
             , last_child_count(0) {}
     };
     ankerl::unordered_dense::map<VoxelKey, VoxelNode_L1, VoxelKeyHash> m_voxels_L1;
+
+    SpatialIndex m_point_index;
+    ankerl::unordered_dense::map<VoxelKey, std::uint64_t, VoxelKeyHash> m_point_ids;
+    std::uint64_t m_next_point_id = 1;
     
     /// Hit markers for current scan visualization
     ankerl::unordered_dense::map<VoxelKey, bool, VoxelKeyHash> m_hit_voxels;
